@@ -37,10 +37,13 @@ impl NativeMuxer {
             .ok_or_else(|| EngineError::OsApiError("No valid video stream found".into()))?;
         let video_idx = video_stream.index();
 
-        let mut ost_video = octx
-            .add_stream(ffmpeg::encoder::find(Id::None))
-            .map_err(|e| EngineError::OsApiError(e.to_string()))?;
-        ost_video.set_parameters(video_stream.parameters());
+        let video_time_base = {
+            let mut ost_video = octx
+                .add_stream(ffmpeg::encoder::find(Id::None))
+                .map_err(|e| EngineError::OsApiError(e.to_string()))?;
+            ost_video.set_parameters(video_stream.parameters());
+            ost_video.time_base()
+        };
 
         let audio_stream = ictx_audio
             .streams()
@@ -48,26 +51,28 @@ impl NativeMuxer {
             .ok_or_else(|| EngineError::OsApiError("No valid audio stream found".into()))?;
         let audio_idx = audio_stream.index();
 
-        let mut ost_audio = octx
-            .add_stream(ffmpeg::encoder::find(Id::None))
-            .map_err(|e| EngineError::OsApiError(e.to_string()))?;
-
         let mut needs_aac_reencode = false;
-        if audio_stream.parameters().id() != Id::AAC {
-            needs_aac_reencode = true;
-            
-            let encoder = ffmpeg::encoder::find(Id::AAC).unwrap();
-            let mut audio_enc = ffmpeg::codec::context::Context::new_with_codec(encoder)
-                .encoder()
-                .audio()
-                .unwrap();
-            audio_enc.set_rate(44100);
-            audio_enc.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
-            audio_enc.set_format(ffmpeg::format::Sample::FLTP);
-            ost_audio.set_parameters(audio_enc.into());
-        } else {
-            ost_audio.set_parameters(audio_stream.parameters());
-        }
+        let audio_time_base = {
+            let mut ost_audio = octx
+                .add_stream(ffmpeg::encoder::find(Id::None))
+                .map_err(|e| EngineError::OsApiError(e.to_string()))?;
+
+            if audio_stream.parameters().id() != Id::AAC {
+                needs_aac_reencode = true;
+                
+                let mut audio_enc = ffmpeg::codec::context::Context::new()
+                    .encoder()
+                    .audio()
+                    .unwrap();
+                audio_enc.set_rate(44100);
+                audio_enc.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
+                audio_enc.set_format(ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar));
+                ost_audio.set_parameters(audio_enc);
+            } else {
+                ost_audio.set_parameters(audio_stream.parameters());
+            }
+            ost_audio.time_base()
+        };
 
         octx.write_header()
             .map_err(|e| EngineError::OsApiError(e.to_string()))?;
@@ -85,7 +90,7 @@ impl NativeMuxer {
                 if let Some((stream, mut packet)) = video_packets.next() {
                     if stream.index() == video_idx {
                         packet.set_stream(0);
-                        packet.rescale_ts(stream.time_base(), ost_video.time_base());
+                        packet.rescale_ts(stream.time_base(), video_time_base);
                         let _ = packet.write_interleaved(&mut octx);
                     }
                 } else {
@@ -97,7 +102,7 @@ impl NativeMuxer {
                 if let Some((stream, mut packet)) = audio_packets.next() {
                     if stream.index() == audio_idx {
                         packet.set_stream(1);
-                        packet.rescale_ts(stream.time_base(), ost_audio.time_base());
+                        packet.rescale_ts(stream.time_base(), audio_time_base);
                         
                         if needs_aac_reencode {
                             // In full deployment, inject a resampling channel bridge here using SoftwareResampler

@@ -71,9 +71,12 @@ pub fn host_network_get(
 
     // Spawn blocking HTTP client on a separate thread to prevent panicking Tokio executor runtimes
     let fetch_handle = std::thread::spawn(move || {
-        reqwest::blocking::get(&url_str)
-            .and_then(|resp| resp.bytes())
-            .unwrap_or_default()
+        if let Ok(resp) = reqwest::blocking::get(&url_str) {
+            if let Ok(bytes) = resp.bytes() {
+                return bytes;
+            }
+        }
+        bytes::Bytes::new()
     });
 
     let network_bytes = fetch_handle.join().unwrap_or_default();

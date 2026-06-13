@@ -106,20 +106,26 @@ impl CookieExtractor {
     fn extract_linux(&self, _db_path: &Path) -> Result<Bytes, EngineError> {
         use secret_service::{EncryptionType, SecretService};
 
-        let ss = SecretService::connect(EncryptionType::Dh)
-            .map_err(|e| EngineError::DecryptionError(format!("SecretService connection failed: {}", e)))?;
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| EngineError::OsApiError("No tokio runtime found".into()))?;
 
-        let collection = ss.get_default_collection()
-            .map_err(|e| EngineError::DecryptionError(format!("Failed to get default collection: {}", e)))?;
+        handle.block_on(async {
+            let ss = SecretService::connect(EncryptionType::Dh).await
+                .map_err(|e| EngineError::DecryptionError(format!("SecretService connection failed: {}", e)))?;
 
-        let search = collection.search_items(std::collections::HashMap::from([("application", "chrome")]));
-        let items = search.map_err(|e| EngineError::DecryptionError(format!("Search failed: {}", e)))?;
+            let collection = ss.get_default_collection().await
+                .map_err(|e| EngineError::DecryptionError(format!("Failed to get default collection: {}", e)))?;
 
-        if let Some(item) = items.first() {
-            let secret = item.get_secret().map_err(|e| EngineError::DecryptionError(format!("Failed to get secret: {}", e)))?;
-            Ok(Bytes::from(secret))
-        } else {
-            Err(EngineError::DecryptionError("No Chrome secret found in keyring".into()))
-        }
+            let search = collection.search_items(std::collections::HashMap::from([("application", "chrome")])).await;
+            let items = search.map_err(|e| EngineError::DecryptionError(format!("Search failed: {}", e)))?;
+
+            if let Some(item) = items.first() {
+                let secret = item.get_secret().await
+                    .map_err(|e| EngineError::DecryptionError(format!("Failed to get secret: {}", e)))?;
+                Ok(Bytes::from(secret))
+            } else {
+                Err(EngineError::DecryptionError("No Chrome secret found in keyring".into()))
+            }
+        })
     }
 }

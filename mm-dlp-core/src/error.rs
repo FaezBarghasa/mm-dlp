@@ -1,8 +1,24 @@
 use thiserror::Error;
 
 /// The central error type used throughout the `mm-dlp-core` engine.
-#[derive(Debug, Error, uniffi::Error)]
+#[derive(Debug, Clone, Error, uniffi::Error)]
 pub enum EngineError {
+    /// An error related to the file system.
+    #[error("File system error: {0}")]
+    FileSystemError(String),
+
+    /// An error related to decryption.
+    #[error("Decryption error: {0}")]
+    DecryptionError(String),
+
+    /// An error related to database operations.
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
+    /// An error related to OS APIs.
+    #[error("OS API error: {0}")]
+    OsApiError(String),
+
     /// An error related to network operations (e.g., fetching a URL).
     #[error("Network operation failed: {0}")]
     Network(String),

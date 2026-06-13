@@ -33,7 +33,7 @@ impl H3Impersonator {
         quic_config.set_disable_active_migration(false);
 
         // Impersonate Chrome's GREASE for QUIC connections
-        quic_config.set_grease(true);
+        quic_config.grease(true);
 
         let h3_config = quiche::h3::Config::new()
             .map_err(|e| EngineError::OsApiError(format!("Failed to create H3 config: {}", e)))?;
@@ -135,9 +135,10 @@ impl H3Impersonator {
             Some(clean_host)
         };
 
+        let scid_id = quiche::ConnectionId::from_ref(&scid);
         let mut conn = quiche::connect(
             server_name,
-            &scid,
+            &scid_id,
             local_addr,
             peer_addr,
             &mut self.quic_config,
