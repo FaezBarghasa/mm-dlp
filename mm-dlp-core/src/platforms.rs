@@ -1,281 +1,278 @@
-use url::Url;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum ExtractorError {
-    InvalidUrl,
-    UnsupportedPlatform,
-    ExtractionFailed(String),
-}
-
-#[derive(Debug)]
+/// Represents the metadata extracted from a supported media URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaMetadata {
-    pub platform: &'static str,
+    /// The name of the platform (e.g., "YouTube", "Twitter").
+    pub platform: String,
+    /// The type of media content (e.g., "Video", "Post", "Track").
     pub media_type: String,
+    /// The unique identifier for the media on its respective platform.
     pub media_id: String,
-    pub url: String,
 }
 
-/// Trait defining a generalized media extractor for diverse platforms.
+/// Core trait that allows scaling to an arbitrary number of media platforms.
+/// Any new platform extractor must implement this trait.
 pub trait PlatformExtractor: Send + Sync {
-    fn platform_name(&self) -> &'static str;
-    fn can_handle(&self, url: &Url) -> bool;
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError>;
+    /// Attempts to extract media metadata from the given URL.
+    /// Returns `Some(MediaMetadata)` if successful, or `None` if the URL is not recognized by this extractor.
+    fn extract(&self, url: &str) -> Option<MediaMetadata>;
 }
 
-pub struct YouTubeExtractor;
-impl PlatformExtractor for YouTubeExtractor {
-    fn platform_name(&self) -> &'static str { "YouTube" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        let host = url.host_str().unwrap_or("");
-        host.contains("youtube.com") || host.contains("youtu.be")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let host = url.host_str().unwrap_or("");
-        let media_id = if host.contains("youtu.be") {
-            url.path().trim_matches('/').to_string()
-        } else {
-            url.query_pairs()
-                .find(|(k, _)| k == "v")
-                .map(|(_, v)| v.into_owned())
-                .ok_or_else(|| ExtractorError::ExtractionFailed("No video ID found".to_string()))?
-        };
-        
-        Ok(MediaMetadata {
-            platform: self.platform_name(),
-            media_type: "video".to_string(),
-            media_id,
-            url: url.to_string(),
-        })
-    }
+/// Safely strips query parameters, fragment identifiers, and trailing slashes 
+/// from parsed URL segments to reliably isolate the raw ID.
+fn clean_id(part: &str) -> String {
+    part.split('?')
+        .next()
+        .unwrap_or("")
+        .split('&')
+        .next()
+        .unwrap_or("")
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
-pub struct InstagramExtractor;
-impl PlatformExtractor for InstagramExtractor {
-    fn platform_name(&self) -> &'static str { "Instagram" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        url.host_str().unwrap_or("").contains("instagram.com")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        for (i, segment) in segments.iter().enumerate() {
-            if (*segment == "p" || *segment == "reel" || *segment == "tv") && i + 1 < segments.len() {
-                return Ok(MediaMetadata {
-                    platform: self.platform_name(),
-                    media_type: segment.to_string(),
-                    media_id: segments[i + 1].to_string(),
-                    url: url.to_string(),
-                });
-            }
-        }
-        Err(ExtractorError::ExtractionFailed("No Instagram post/reel ID found".to_string()))
-    }
-}
-
-pub struct TikTokExtractor;
-impl PlatformExtractor for TikTokExtractor {
-    fn platform_name(&self) -> &'static str { "TikTok" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        url.host_str().unwrap_or("").contains("tiktok.com")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        for (i, segment) in segments.iter().enumerate() {
-            if *segment == "video" && i + 1 < segments.len() {
-                return Ok(MediaMetadata {
-                    platform: self.platform_name(),
-                    media_type: "video".to_string(),
-                    media_id: segments[i + 1].to_string(),
-                    url: url.to_string(),
-                });
-            }
-        }
-        Err(ExtractorError::ExtractionFailed("No TikTok video ID found".to_string()))
-    }
-}
-
-pub struct XExtractor;
-impl PlatformExtractor for XExtractor {
-    fn platform_name(&self) -> &'static str { "X" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        let host = url.host_str().unwrap_or("");
-        host.contains("x.com") || host.contains("twitter.com")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        for (i, segment) in segments.iter().enumerate() {
-            if *segment == "status" && i + 1 < segments.len() {
-                return Ok(MediaMetadata {
-                    platform: self.platform_name(),
-                    media_type: "status".to_string(),
-                    media_id: segments[i + 1].to_string(),
-                    url: url.to_string(),
-                });
-            }
-        }
-        Err(ExtractorError::ExtractionFailed("No X/Twitter status ID found".to_string()))
-    }
-}
-
-pub struct SoundCloudExtractor;
-impl PlatformExtractor for SoundCloudExtractor {
-    fn platform_name(&self) -> &'static str { "SoundCloud" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        url.host_str().unwrap_or("").contains("soundcloud.com")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        if segments.len() >= 2 {
-            let user = segments[0];
-            let track = segments[1];
-            return Ok(MediaMetadata {
-                platform: self.platform_name(),
-                media_type: "track".to_string(),
-                media_id: format!("{}/{}", user, track),
-                url: url.to_string(),
-            });
-        }
-        Err(ExtractorError::ExtractionFailed("No SoundCloud track ID found".to_string()))
-    }
-}
-
-pub struct SpotifyExtractor;
-impl PlatformExtractor for SpotifyExtractor {
-    fn platform_name(&self) -> &'static str { "Spotify" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        url.host_str().unwrap_or("").contains("spotify.com")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        for (i, segment) in segments.iter().enumerate() {
-            if (*segment == "track" || *segment == "album" || *segment == "playlist" || *segment == "episode") && i + 1 < segments.len() {
-                return Ok(MediaMetadata {
-                    platform: self.platform_name(),
-                    media_type: segment.to_string(),
-                    media_id: segments[i + 1].to_string(),
-                    url: url.to_string(),
-                });
-            }
-        }
-        Err(ExtractorError::ExtractionFailed("No Spotify ID found".to_string()))
-    }
-}
-
-pub struct AppleMusicExtractor;
-impl PlatformExtractor for AppleMusicExtractor {
-    fn platform_name(&self) -> &'static str { "Apple Music" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        url.host_str().unwrap_or("").contains("music.apple.com")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        if let Some((_, v)) = url.query_pairs().find(|(k, _)| k == "i") {
-            return Ok(MediaMetadata {
-                platform: self.platform_name(),
-                media_type: "track".to_string(),
-                media_id: v.into_owned(),
-                url: url.to_string(),
-            });
-        }
-        
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        for (i, segment) in segments.iter().enumerate() {
-            if (*segment == "album" || *segment == "playlist") && i + 1 < segments.len() {
-                return Ok(MediaMetadata {
-                    platform: self.platform_name(),
-                    media_type: segment.to_string(),
-                    media_id: segments.last().unwrap_or(&"").to_string(),
-                    url: url.to_string(),
-                });
-            }
-        }
-        
-        Err(ExtractorError::ExtractionFailed("No Apple Music ID found".to_string()))
-    }
-}
-
-pub struct TwitchExtractor;
-impl PlatformExtractor for TwitchExtractor {
-    fn platform_name(&self) -> &'static str { "Twitch" }
-    
-    fn can_handle(&self, url: &Url) -> bool {
-        url.host_str().unwrap_or("").contains("twitch.tv")
-    }
-    
-    fn extract_metadata(&self, url: &Url) -> Result<MediaMetadata, ExtractorError> {
-        let segments: Vec<&str> = url.path_segments().map(|c| c.collect()).unwrap_or_default();
-        for (i, segment) in segments.iter().enumerate() {
-            if *segment == "videos" && i + 1 < segments.len() {
-                return Ok(MediaMetadata {
-                    platform: self.platform_name(),
-                    media_type: "video".to_string(),
-                    media_id: segments[i + 1].to_string(),
-                    url: url.to_string(),
-                });
-            }
-        }
-        
-        if !segments.is_empty() && !segments[0].is_empty() {
-            return Ok(MediaMetadata {
-                platform: self.platform_name(),
-                media_type: "channel".to_string(),
-                media_id: segments[0].to_string(),
-                url: url.to_string(),
-            });
-        }
-        
-        Err(ExtractorError::ExtractionFailed("No Twitch ID/Channel found".to_string()))
-    }
-}
-
-/// Core registry routing URLs to the correct platform extractor
+/// A registry that holds all available platform extractors.
+/// It iterates through them to find the appropriate one for a given URL.
 pub struct PlatformRegistry {
+    /// A collection of boxed, dynamic extractors implementing `PlatformExtractor`.
     extractors: Vec<Box<dyn PlatformExtractor>>,
-}
-
-impl PlatformRegistry {
-    pub fn new() -> Self {
-        Self {
-            extractors: vec![
-                Box::new(YouTubeExtractor),
-                Box::new(InstagramExtractor),
-                Box::new(TikTokExtractor),
-                Box::new(XExtractor),
-                Box::new(SoundCloudExtractor),
-                Box::new(SpotifyExtractor),
-                Box::new(AppleMusicExtractor),
-                Box::new(TwitchExtractor),
-            ],
-        }
-    }
-
-    pub fn extract(&self, raw_url: &str) -> Result<MediaMetadata, ExtractorError> {
-        let parsed_url = Url::parse(raw_url).map_err(|_| ExtractorError::InvalidUrl)?;
-        
-        for extractor in &self.extractors {
-            if extractor.can_handle(&parsed_url) {
-                return extractor.extract_metadata(&parsed_url);
-            }
-        }
-        
-        Err(ExtractorError::UnsupportedPlatform)
-    }
 }
 
 impl Default for PlatformRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl PlatformRegistry {
+    /// Creates a new `PlatformRegistry` pre-populated with all supported platform extractors.
+    pub fn new() -> Self {
+        Self {
+            extractors: vec![
+                Box::new(YouTubeExtractor),
+                Box::new(TwitterExtractor),
+                Box::new(InstagramExtractor),
+                Box::new(TikTokExtractor),
+                Box::new(RedditExtractor),
+                Box::new(TwitchExtractor),
+                Box::new(SpotifyExtractor),
+                Box::new(VimeoExtractor),
+                Box::new(SoundCloudExtractor),
+            ],
+        }
+    }
+
+    /// Attempts to extract media metadata from the given URL using the registered extractors.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL string to parse.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(MediaMetadata)` if an extractor successfully parses the URL.
+    /// * `Err(String)` if no supported platform matches the URL.
+    pub fn extract(&self, url: &str) -> Result<MediaMetadata, String> {
+        for extractor in &self.extractors {
+            if let Some(metadata) = extractor.extract(url) {
+                return Ok(metadata);
+            }
+        }
+        Err(format!("No supported platform found for URL: {}", url))
+    }
+}
+
+// ==========================================
+// Platform-Specific Extractor Implementations
+// ==========================================
+
+/// Extractor for YouTube URLs (videos and shorts).
+struct YouTubeExtractor;
+impl PlatformExtractor for YouTubeExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        // Standard YouTube video URL
+        if url.contains("youtube.com/watch") {
+            if let Some(v_idx) = url.find("v=") {
+                let id = clean_id(&url[v_idx + 2..]);
+                if !id.is_empty() {
+                    return Some(MediaMetadata { platform: "YouTube".to_string(), media_type: "Video".to_string(), media_id: id });
+                }
+            }
+        // Shortened youtu.be URL
+        } else if let Some(be_idx) = url.find("youtu.be/") {
+            let id = clean_id(&url[be_idx + 9..]);
+            if !id.is_empty() {
+                return Some(MediaMetadata { platform: "YouTube".to_string(), media_type: "Video".to_string(), media_id: id });
+            }
+        // YouTube Shorts URL
+        } else if let Some(short_idx) = url.find("youtube.com/shorts/") {
+            let id = clean_id(&url[short_idx + 19..]);
+            if !id.is_empty() {
+                return Some(MediaMetadata { platform: "YouTube".to_string(), media_type: "Short".to_string(), media_id: id });
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for Twitter/X URLs.
+struct TwitterExtractor;
+impl PlatformExtractor for TwitterExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        // Match both legacy twitter.com and new x.com domains
+        if url.contains("twitter.com/") || url.contains("x.com/") {
+            if let Some(status_idx) = url.find("/status/") {
+                let id = clean_id(&url[status_idx + 8..]);
+                if !id.is_empty() {
+                    return Some(MediaMetadata { platform: "Twitter".to_string(), media_type: "Post".to_string(), media_id: id });
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for Instagram URLs (posts, reels, IGTV).
+struct InstagramExtractor;
+impl PlatformExtractor for InstagramExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        if url.contains("instagram.com/") {
+            let markers = [("/p/", "Post"), ("/reel/", "Reel"), ("/tv/", "IGTV")];
+            for (marker, m_type) in markers {
+                if let Some(idx) = url.find(marker) {
+                    let id = clean_id(&url[idx + marker.len()..]);
+                    if !id.is_empty() {
+                        return Some(MediaMetadata { platform: "Instagram".to_string(), media_type: m_type.to_string(), media_id: id });
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for TikTok URLs.
+struct TikTokExtractor;
+impl PlatformExtractor for TikTokExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        if url.contains("tiktok.com/") {
+            if let Some(video_idx) = url.find("/video/") {
+                let id = clean_id(&url[video_idx + 7..]);
+                if !id.is_empty() {
+                    return Some(MediaMetadata { platform: "TikTok".to_string(), media_type: "Video".to_string(), media_id: id });
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for Reddit URLs.
+struct RedditExtractor;
+impl PlatformExtractor for RedditExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        // Look for the standard Reddit comment/post URL pattern
+        if url.contains("reddit.com/r/") {
+            if let Some(comments_idx) = url.find("/comments/") {
+                let id = clean_id(&url[comments_idx + 10..]);
+                if !id.is_empty() {
+                    return Some(MediaMetadata { platform: "Reddit".to_string(), media_type: "Post".to_string(), media_id: id });
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for Twitch URLs (VODs, clips, streams).
+struct TwitchExtractor;
+impl PlatformExtractor for TwitchExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        if url.contains("twitch.tv/") {
+            // VOD
+            if let Some(videos_idx) = url.find("/videos/") {
+                let id = clean_id(&url[videos_idx + 8..]);
+                if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Video".to_string(), media_id: id }); }
+            // Clip within channel
+            } else if let Some(clip_idx) = url.find("clip/") {
+                let id = clean_id(&url[clip_idx + 5..]);
+                if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Clip".to_string(), media_id: id }); }
+            // Dedicated clips domain
+            } else if url.contains("clips.twitch.tv/") {
+                let id_part = url.split("clips.twitch.tv/").nth(1).unwrap_or("");
+                let id = clean_id(id_part);
+                if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Clip".to_string(), media_id: id }); }
+            // Live stream (channel name)
+            } else {
+                let host_idx = url.find("twitch.tv/").unwrap();
+                let channel = clean_id(&url[host_idx + 10..]);
+                if !channel.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Stream".to_string(), media_id: channel }); }
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for Spotify URLs (tracks, albums, playlists, episodes).
+struct SpotifyExtractor;
+impl PlatformExtractor for SpotifyExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        if url.contains("spotify.com/") {
+            let markers = [("/track/", "Track"), ("/album/", "Album"), ("/playlist/", "Playlist"), ("/episode/", "Episode")];
+            for (marker, m_type) in markers {
+                if let Some(idx) = url.find(marker) {
+                    let id = clean_id(&url[idx + marker.len()..]);
+                    if !id.is_empty() { return Some(MediaMetadata { platform: "Spotify".to_string(), media_type: m_type.to_string(), media_id: id }); }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for Vimeo URLs.
+struct VimeoExtractor;
+impl PlatformExtractor for VimeoExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        if url.contains("vimeo.com/") {
+            let host_idx = url.find("vimeo.com/").unwrap();
+            let id = clean_id(&url[host_idx + 10..]);
+            // Ensure the extracted ID is numeric, as Vimeo video IDs are numbers
+            if !id.is_empty() && id.chars().all(char::is_numeric) {
+                return Some(MediaMetadata { platform: "Vimeo".to_string(), media_type: "Video".to_string(), media_id: id });
+            }
+        }
+        None
+    }
+}
+
+/// Extractor for SoundCloud URLs.
+struct SoundCloudExtractor;
+impl PlatformExtractor for SoundCloudExtractor {
+    fn extract(&self, url: &str) -> Option<MediaMetadata> {
+        if url.contains("soundcloud.com/") {
+            let host_idx = url.find("soundcloud.com/").unwrap();
+            let path = &url[host_idx + 15..];
+            let parts: Vec<&str> = path.split('?').next().unwrap_or("").split('#').next().unwrap_or("").split('/').collect();
+            
+            // Expected format: soundcloud.com/{artist}/{track}
+            if parts.len() >= 2 {
+                let artist = parts[0];
+                let track = parts[1];
+                if !artist.is_empty() && !track.is_empty() {
+                    return Some(MediaMetadata {
+                        platform: "SoundCloud".to_string(),
+                        media_type: "Track".to_string(),
+                        // Combine artist and track as the unique identifier
+                        media_id: format!("{}/{}", artist, track),
+                    });
+                }
+            }
+        }
+        None
     }
 }
