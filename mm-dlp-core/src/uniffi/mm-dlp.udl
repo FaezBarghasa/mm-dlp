@@ -1,66 +1,68 @@
-interface MMDlpEngine {
-    constructor();
+namespace mmdlp {
+    // ==========================================
+    // Core Data Structures
+    // ==========================================
 
-    [Throws=EngineError]
-    void initialize_engine(EngineConfig config);
+    dictionary MediaFormat {
+        string format_id;
+        string url;
+        string ext;
+        u32? width;
+        u32? height;
+        string? vcodec;
+        string? acodec;
+        u64? filesize;
+    };
 
-    [Throws=EngineError]
-    MediaInfo extract_metadata(string url);
+    dictionary MediaInfo {
+        string id;
+        string title;
+        string? description;
+        string? uploader;
+        u32? duration;
+        sequence<MediaFormat> formats;
+    };
 
-    [Throws=EngineError]
-    void start_download(string job_id, DownloadConfig config, DownloadProgressCallback progress_callback);
+    dictionary FfmpegProgress {
+        u64? frame;
+        f32? fps;
+        f32? q;
+        u64? size_kb;
+        string? time;
+        string? bitrate;
+        f32? speed;
+    };
 
-    void pause_download(string job_id);
-    void resume_download(string job_id);
-    void cancel_download(string job_id);
-};
+    // ==========================================
+    // Exceptions & Callbacks
+    // ==========================================
 
-dictionary EngineConfig {
-    string user_agent_template;
-    string? proxy_url;
-    string cache_directory;
-};
+    [Error]
+    enum EngineError {
+        "FileSystemError",
+        "DecryptionError",
+        "DatabaseError",
+        "OsApiError",
+    };
 
-dictionary DownloadConfig {
-    string source_url;
-    string destination_path;
-    u16 concurrent_connections;
-    u64 throttle_bytes_per_second;
-};
+    // Maps Rust-native async behaviors into cross-platform compatible delegates
+    callback interface DownloadProgressCallback {
+        void on_progress(FfmpegProgress progress);
+        void on_complete();
+        void on_error(EngineError error);
+    };
 
-interface DownloadProgressCallback {
-    void on_progress(u64 bytes_downloaded, u64 total_bytes, double current_speed);
-    void on_status_change(DownloadJobStatus status);
-};
+    // ==========================================
+    // Main Engine Interface
+    // ==========================================
 
-enum DownloadJobStatus {
-    "Idle",
-    "Connecting",
-    "Downloading",
-    "Paused",
-    "Processing",
-    "Completed",
-    "Failed"
-};
+    interface MmDlpEngine {
+        constructor();
+        
+        [Throws=EngineError]
+        MediaInfo extract_metadata(string url);
 
-dictionary MediaInfo {
-    string title;
-    string description;
-    string extractor_name;
-    sequence<MediaFormat> formats;
-};
-
-dictionary MediaFormat {
-    string format_id;
-    string extension;
-    string? resolution;
-    u64? file_size;
-    string url;
-};
-
-exception EngineError {
-    NetworkFailure(string reason);
-    ExtractorBanned(string reason);
-    FileSystemError(string reason);
-    InternalPanic(string reason);
+        [Throws=EngineError]
+        void download_and_mux(string video_url, string audio_url, string output_path, DownloadProgressCallback callback);
+    };
 };
