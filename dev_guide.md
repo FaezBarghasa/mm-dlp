@@ -34,6 +34,16 @@ To maintain a production-ready and highly reliable codebase, contributors must s
 - **No `todo!()` or `FIXME`**: Code must be finalized before submitting. Do not leave `TODO`, `FIXME`, or change functionality to `todo!()` anywhere in the repository.
 - **Robust Error Handling**: Properly process all `Result` and `Option` types. Avoid using `.unwrap()` or `.expect()` in library implementation code outside of testing modules.
 
+
+---
+
+## Compiling & FFI Binding Generation
+
+When building the workspace or writing new code, keep in mind:
+- **Build Target Alignment**: The toolchain uses Clang for `bindgen` (under `boring-sys` and `ffmpeg-sys-next`). A layout mismatch issue with 64-bit target compilation is automatically addressed via [.cargo/config.toml](file:///home/jrad/RustroverProjects/mm-dlp/.cargo/config.toml) setting the `BINDGEN_EXTRA_CLANG_ARGS` variable.
+- **Offline Compliance**: Local library versions are enforced. Do not add external network dependencies or change Cargo resolver behaviors.
+- **FFI Contract Verification**: If you modify `src/mm-dlp.udl`, ensure that you run `cargo test --test uniffi_test` to verify that Kotlin and Swift interfaces continue to generate successfully.
+
 ---
 
 ## Adding a New Platform Extractor

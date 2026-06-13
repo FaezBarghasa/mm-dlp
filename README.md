@@ -67,6 +67,35 @@ fn main() {
     }
 }
 ```
+## Multi-Platform FFI Bindings (UniFFI)
+
+`mm-dlp-core` includes full **UniFFI** bindings support, exposing the core extraction and downloading engine to foreign languages including **Kotlin** (for Android/JNI) and **Swift** (for iOS/macOS).
+
+### Features Exposed
+- **`MmDlpEngine`**: The main entry point to extract metadata and run async segment downloading and muxing.
+- **`DownloadProgressCallback`**: A callback interface to receive real-time ffmpeg multiplexing progress (`FfmpegProgress`), completion, or error delegates in Swift/Kotlin.
+- **`EngineError`**: Unified error boundary mapping Rust errors into native language exceptions.
+
+### Compiling and Generating Bindings
+The crate handles build environment target configurations automatically via [.cargo/config.toml](file:///home/jrad/RustroverProjects/mm-dlp/.cargo/config.toml) to prevent Clang compilation size assertion layout crashes.
+
+To programmatically build and verify Swift and Kotlin JNI exports, run:
+```bash
+cargo test --test uniffi_test
+```
+
+Alternatively, generate the bindings manually using the `uniffi-bindgen` CLI tool:
+```bash
+# 1. Compile the dynamic library
+cargo build --release
+
+# 2. Run uniffi-bindgen in library mode
+cargo run --bin uniffi-bindgen generate \
+    --library target/release/libmm_dlp_core.so \
+    --language kotlin \
+    --language swift \
+    --out-dir ./bindings
+```
 
 ## Architecture
 

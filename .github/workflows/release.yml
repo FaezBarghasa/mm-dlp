@@ -12,6 +12,8 @@ jobs:
   build-and-upload:
     name: Build and Release for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      BINDGEN_EXTRA_CLANG_ARGS: --target=${{ matrix.target }}
     strategy:
       matrix:
         include:
