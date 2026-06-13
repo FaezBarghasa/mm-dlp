@@ -40,16 +40,18 @@ impl BackgroundPool {
     ///
     /// * `concurrency_limit` - The maximum number of downloads to run in parallel.
     ///   This value is clamped between 1 and 512 to ensure reasonable bounds.
-    pub fn new(concurrency_limit: usize) -> Self {
+    /// * `queue_size` - The maximum number of jobs that can be queued before blocking.
+    /// * `registry` - A shared instance of the `PlatformRegistry`.
+    pub fn new(concurrency_limit: usize, queue_size: usize, registry: Arc<PlatformRegistry>) -> Self {
         // Enforce the 1 to 512 multithreading rule for stability.
         let limit = concurrency_limit.clamp(1, 512);
 
         // Create a bounded MPSC channel to act as the job queue.
-        let (tx, mut rx) = mpsc::channel::<DownloadJob>(10000);
+        // We ensure a minimum capacity of 1 to prevent panic on channel creation.
+        let (tx, mut rx) = mpsc::channel::<DownloadJob>(queue_size.max(1));
 
         // A semaphore ensures we never exceed the specified concurrency limit.
         let semaphore = Arc::new(Semaphore::new(limit));
-        let registry = Arc::new(PlatformRegistry::new());
 
         // The main dispatcher task, running detached in the background.
         tokio::spawn(async move {
@@ -67,10 +69,6 @@ impl BackgroundPool {
                 // Spawn the actual download job onto Tokio's multithreaded worker pool.
                 tokio::spawn(async move {
                     Self::process_job(job, registry_clone).await;
-
-                    // The permit is automatically returned to the semaphore when `_permit`
-                    // goes out of scope, freeing up a slot for the next queued download.
-                    drop(permit);
                 });
             }
         });
@@ -95,6 +93,20 @@ impl BackgroundPool {
             .send(DownloadJob { url })
             .await
             .map_err(|_| PoolError::QueueClosed)
+    }
+
+    /// Synchronously attempts to submit a new job to the pool without waiting.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the job was successfully submitted.
+    /// * `Err(PoolError::QueueFull)` if the queue is currently at capacity.
+    /// * `Err(PoolError::QueueClosed)` if the pool has been shut down.
+    pub fn try_submit(&self, url: String) -> Result<(), PoolError> {
+        self.sender.try_send(DownloadJob { url }).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => PoolError::QueueFull,
+            mpsc::error::TrySendError::Closed(_) => PoolError::QueueClosed,
+        })
     }
 
     /// Contains the complete execution logic for a single download job.

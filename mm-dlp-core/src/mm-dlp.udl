@@ -59,7 +59,7 @@ namespace mmdlp;
 
     interface MmDlpEngine {
         constructor();
-        
+
         [Throws=EngineError]
         MediaInfo extract_metadata(string url);
 
