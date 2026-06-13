@@ -1,37 +1,50 @@
-use rquickjs::{Runtime, Context};
-use crate::error::{Result, EngineError};
+use crate::client::EngineError;
+use rquickjs::{Context, Function, Runtime};
 
 pub struct SandboxJsEngine {
-    _runtime: Runtime,
+    runtime: Runtime,
     context: Context,
 }
 
 impl SandboxJsEngine {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, EngineError> {
         let runtime = Runtime::new()
-            .map_err(|e| EngineError::InternalPanic(format!("Failed to spawn QuickJS thread: {}", e)))?;
-
+            .map_err(|e| EngineError::OsApiError(format!("Failed to create QuickJS runtime: {}", e)))?;
+        
+        // Restrict memory limit to 5 MB to prevent out-of-memory sandbox attacks
+        runtime.set_memory_limit(5 * 1024 * 1024);
+        // Restrict stack size to 512 KB to avoid deep recursion crashes
+        runtime.set_max_stack_size(512 * 1024);
+        
         let context = Context::full(&runtime)
-            .map_err(|e| EngineError::InternalPanic(format!("Context setup failed: {}", e)))?;
-
-        Ok(Self { _runtime: runtime, context })
+            .map_err(|e| EngineError::OsApiError(format!("Failed to create QuickJS context: {}", e)))?;
+        
+        context.with(|ctx| {
+            let global = ctx.globals();
+            
+            // Aggressively mask dangerous environment features to guarantee strict execution safety
+            let _ = global.remove("eval");
+            let _ = global.remove("Function");
+            let _ = global.remove("globalThis");
+            let _ = global.remove("process");
+            let _ = global.remove("require");
+            let _ = global.remove("console");
+        });
+        
+        Ok(Self { runtime, context })
     }
 
-    pub fn execute_decipher(&self, script: &str, argument: &str, target_fn: &str) -> Result<String> {
+    pub fn execute_decipher(&self, script: &str, argument: &str, target_fn: &str) -> Result<String, EngineError> {
         self.context.with(|ctx| {
-            // Setup sandbox boundary parameters
-            ctx.eval::<(), _>("var window = {}; var global = {};")
-                .map_err(|e| EngineError::ExtractorBanned { reason: e.to_string() })?;
-
-            // Compile signature code payload
             ctx.eval::<(), _>(script)
-                .map_err(|e| EngineError::ExtractorBanned { reason: format!("Compilation failed: {}", e) })?;
-
-            let execution_call = format!("{0}(\"{1}\");", target_fn, argument);
-            let result: String = ctx.eval(&execution_call)
-                .map_err(|e| EngineError::ExtractorBanned { reason: format!("Execution failed: {}", e) })?;
-
-            Ok(result)
+                .map_err(|e| EngineError::OsApiError(format!("Failed to evaluate JS script: {:?}", e)))?;
+            
+            let globals = ctx.globals();
+            let func: Function = globals.get(target_fn)
+                .map_err(|e| EngineError::OsApiError(format!("Target function '{}' not found: {:?}", target_fn, e)))?;
+            
+            func.call::<_, String>((argument,))
+                .map_err(|e| EngineError::OsApiError(format!("Failed to execute decipher function: {:?}", e)))
         })
     }
 }
