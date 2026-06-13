@@ -2,6 +2,7 @@ use crate::client::EngineError;
 use rquickjs::{Context, Function, Runtime};
 
 pub struct SandboxJsEngine {
+    #[allow(dead_code)]
     runtime: Runtime,
     context: Context,
 }

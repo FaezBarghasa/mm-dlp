@@ -10,8 +10,8 @@ impl TlsImpersonator {
         let mut builder = SslConnector::builder(SslMethod::tls_client())
             .map_err(|e| EngineError::OsApiError(format!("Failed to create SSL builder: {}", e)))?;
 
-        // Configure standard ciphers: TLS 1.3 GREASE, AES_128_GCM_SHA256, AES_256_GCM_SHA384, CHACHA20_POLY1305_SHA256
-        let cipher_list = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256";
+        // Configure standard ciphers: TLS 1.2 ciphers for compatibility (TLS 1.3 ciphers are configured by default in BoringSSL)
+        let cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305";
         builder.set_cipher_list(cipher_list)
             .map_err(|e| EngineError::OsApiError(format!("Failed to set cipher list: {}", e)))?;
 
