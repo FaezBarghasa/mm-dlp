@@ -1,0 +1,66 @@
+interface MMDlpEngine {
+    constructor();
+
+    [Throws=EngineError]
+    void initialize_engine(EngineConfig config);
+
+    [Throws=EngineError]
+    MediaInfo extract_metadata(string url);
+
+    [Throws=EngineError]
+    void start_download(string job_id, DownloadConfig config, DownloadProgressCallback progress_callback);
+
+    void pause_download(string job_id);
+    void resume_download(string job_id);
+    void cancel_download(string job_id);
+};
+
+dictionary EngineConfig {
+    string user_agent_template;
+    string? proxy_url;
+    string cache_directory;
+};
+
+dictionary DownloadConfig {
+    string source_url;
+    string destination_path;
+    u16 concurrent_connections;
+    u64 throttle_bytes_per_second;
+};
+
+interface DownloadProgressCallback {
+    void on_progress(u64 bytes_downloaded, u64 total_bytes, double current_speed);
+    void on_status_change(DownloadJobStatus status);
+};
+
+enum DownloadJobStatus {
+    "Idle",
+    "Connecting",
+    "Downloading",
+    "Paused",
+    "Processing",
+    "Completed",
+    "Failed"
+};
+
+dictionary MediaInfo {
+    string title;
+    string description;
+    string extractor_name;
+    sequence<MediaFormat> formats;
+};
+
+dictionary MediaFormat {
+    string format_id;
+    string extension;
+    string? resolution;
+    u64? file_size;
+    string url;
+};
+
+exception EngineError {
+    NetworkFailure(string reason);
+    ExtractorBanned(string reason);
+    FileSystemError(string reason);
+    InternalPanic(string reason);
+};
