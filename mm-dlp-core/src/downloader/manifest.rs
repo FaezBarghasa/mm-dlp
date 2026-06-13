@@ -1,43 +1,53 @@
-use crate::error::{Result, EngineError};
+use crate::client::EngineError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DownloadSegment {
-    pub sequence_number: usize,
-    pub uri: String,
-    pub duration_seconds: f64,
-    pub byte_range: Option<String>,
+    pub index: usize,
+    pub url: String,
 }
 
-pub fn parse_hls_playlist(m3u8_payload: &str, base_url: &str) -> Result<Vec<DownloadSegment>> {
+pub fn parse_m3u8(manifest_content: &str, base_url: &str) -> Result<Vec<DownloadSegment>, EngineError> {
     let mut segments = Vec::new();
-    let mut current_seq = 0;
+    let mut index = 0;
 
-    for line in m3u8_payload.lines() {
-        if line.starts_with("#EXT-X-MEDIA-SEQUENCE:") {
-            current_seq = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:")
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(0);
-        } else if line.starts_with("#EXTINF:") {
-            // Extract duration segment values
-        } else if !line.starts_with('#') && !line.is_empty() {
-            let full_uri = if line.starts_with("http") {
-                line.to_string()
-            } else {
-                format!("{}/{}", base_url, line)
-            };
-
-            segments.push(DownloadSegment {
-                sequence_number: current_seq,
-                uri: full_uri,
-                duration_seconds: 2.0, // default target fallback
-                byte_range: None,
-            });
-            current_seq += 1;
+    for line in manifest_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
         }
+
+        let url = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            trimmed.to_string()
+        } else {
+            format!("{}/{}", base_url.trim_end_matches('/'), trimmed.trim_start_matches('/'))
+        };
+
+        segments.push(DownloadSegment { index, url });
+        index += 1;
     }
 
-    if segments.is_empty() {
-        return Err(EngineError::ExtractorBanned { reason: "No valid streams found".to_string() });
+    Ok(segments)
+}
+
+pub fn parse_dash(manifest_content: &str, base_url: &str) -> Result<Vec<DownloadSegment>, EngineError> {
+    let mut segments = Vec::new();
+    let mut index = 0;
+
+    for line in manifest_content.lines() {
+        if let Some(media_start) = line.find("media=\"") {
+            let start = media_start + 7;
+            if let Some(media_end) = line[start..].find('"') {
+                let url_part = &line[start..start + media_end];
+                let url = if url_part.starts_with("http://") || url_part.starts_with("https://") {
+                    url_part.to_string()
+                } else {
+                    format!("{}/{}", base_url.trim_end_matches('/'), url_part.trim_start_matches('/'))
+                };
+
+                segments.push(DownloadSegment { index, url });
+                index += 1;
+            }
+        }
     }
 
     Ok(segments)
