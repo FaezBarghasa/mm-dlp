@@ -27,6 +27,15 @@ When implementing new features or extractors:
 
 ---
 
+## Contributor Rules & Code Standards
+
+To maintain a production-ready and highly reliable codebase, contributors must strictly adhere to the following rules:
+- **No Function Stubs**: Every function must be completely implemented and fully functional. Do not make function stubs or use empty placeholders.
+- **No `todo!()` or `FIXME`**: Code must be finalized before submitting. Do not leave `TODO`, `FIXME`, or change functionality to `todo!()` anywhere in the repository.
+- **Robust Error Handling**: Properly process all `Result` and `Option` types. Avoid using `.unwrap()` or `.expect()` in library implementation code outside of testing modules.
+
+---
+
 ## Adding a New Platform Extractor
 
 Adding a new platform is straightforward. Let's walk through adding a fully functional extractor for a hypothetical platform called **EchoStream**.
