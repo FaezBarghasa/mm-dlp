@@ -52,23 +52,17 @@ impl H3Impersonator {
         &mut self.h3_config
     }
 
-    /// Binds an IPv6-first UDP socket for QUIC traffic. Safely falls back to IPv4.
-    pub async fn bind_dual_stack_socket() -> Result<UdpSocket, EngineError> {
-        // Attempt to bind to the IPv6 wildcard first to support IPv6 natively
-        match UdpSocket::bind("[::]:0").await {
-            Ok(socket) => Ok(socket),
-            Err(_) => {
-                // Safe fallback to IPv4 if the host system network does not support IPv6 routing
-                UdpSocket::bind("0.0.0.0:0").await
-                    .map_err(|e| EngineError::OsApiError(format!("Failed to bind UDP socket: {}", e)))
-            }
-        }
+    /// Binds a UDP socket for QUIC traffic, matching the IP version of the target address.
+    pub async fn bind_socket(peer_addr: &SocketAddr) -> Result<UdpSocket, EngineError> {
+        let bind_addr = if peer_addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        UdpSocket::bind(bind_addr).await
+            .map_err(|e| EngineError::OsApiError(format!("Failed to bind UDP socket: {}", e)))
     }
 
     /// Resolves a hostname to a SocketAddr, preferring IPv6 (AAAA) records over IPv4.
     pub fn resolve_ipv6_preferred(host: &str, port: u16) -> Result<SocketAddr, EngineError> {
-        let addrs = format!("{}:{}", host, port)
-            .to_socket_addrs()
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let addrs = (host, port).to_socket_addrs()
             .map_err(|e| EngineError::OsApiError(format!("DNS resolution failed: {}", e)))?;
 
         let mut ipv4_fallback = None;
@@ -117,8 +111,8 @@ impl H3Impersonator {
         port: u16,
         session_data: Option<&[u8]>,
     ) -> Result<(quiche::Connection, UdpSocket), EngineError> {
-        let socket = Self::bind_dual_stack_socket().await?;
         let peer_addr = Self::resolve_ipv6_preferred(host, port)?;
+        let socket = Self::bind_socket(&peer_addr).await?;
 
         // Generate a localized SCID (Source Connection ID) 
         let mut scid = [0; quiche::MAX_CONN_ID_LEN];
@@ -134,8 +128,15 @@ impl H3Impersonator {
         let local_addr = socket.local_addr()
             .map_err(|e| EngineError::OsApiError(format!("Failed to get local addr: {}", e)))?;
 
+        let clean_host = host.trim_start_matches('[').trim_end_matches(']');
+        let server_name = if clean_host.parse::<std::net::IpAddr>().is_ok() {
+            None
+        } else {
+            Some(clean_host)
+        };
+
         let mut conn = quiche::connect(
-            Some(host),
+            server_name,
             &scid,
             local_addr,
             peer_addr,
