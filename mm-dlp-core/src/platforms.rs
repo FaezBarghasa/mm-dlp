@@ -1,4 +1,13 @@
+//! Defines the core metadata structures and the extensible platform extractor system.
+//!
+//! This module provides the `PlatformRegistry`, which routes URLs to specific
+//! `PlatformExtractor` implementations (like YouTube, Twitter, etc.) to extract
+//! unified `MediaMetadata`.
+
 /// Represents the metadata extracted from a supported media URL.
+///
+/// This unified structure allows the rest of the application to handle media
+/// uniformly, regardless of its source platform.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaMetadata {
     /// The name of the platform (e.g., "YouTube", "Twitter").
@@ -13,23 +22,34 @@ pub struct MediaMetadata {
 /// Any new platform extractor must implement this trait.
 pub trait PlatformExtractor: Send + Sync {
     /// Attempts to extract media metadata from the given URL.
-    /// Returns `Some(MediaMetadata)` if successful, or `None` if the URL is not recognized by this extractor.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to analyze.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(MediaMetadata)` if successful.
+    /// * `None` if the URL is not recognized by this extractor.
     fn extract(&self, url: &str) -> Option<MediaMetadata>;
 }
 
 /// Safely strips query parameters, fragment identifiers, and trailing slashes 
 /// from parsed URL segments to reliably isolate the raw ID.
+///
+/// This is crucial for avoiding duplicate downloads or routing errors caused
+/// by tracking parameters (e.g., `?si=...`).
 fn clean_id(part: &str) -> String {
-    part.split('?')
+    part.split('?') // Remove query parameters
         .next()
         .unwrap_or("")
-        .split('&')
+        .split('&') // Extra safety for improperly formatted URLs
         .next()
         .unwrap_or("")
-        .split('#')
+        .split('#') // Remove fragment identifiers
         .next()
         .unwrap_or("")
-        .split('/')
+        .split('/') // Remove trailing slashes or sub-paths
         .next()
         .unwrap_or("")
         .to_string()
@@ -42,6 +62,7 @@ pub struct PlatformRegistry {
     extractors: Vec<Box<dyn PlatformExtractor>>,
 }
 
+/// Provides a default implementation for `PlatformRegistry`.
 impl Default for PlatformRegistry {
     fn default() -> Self {
         Self::new()
@@ -77,11 +98,13 @@ impl PlatformRegistry {
     /// * `Ok(MediaMetadata)` if an extractor successfully parses the URL.
     /// * `Err(String)` if no supported platform matches the URL.
     pub fn extract(&self, url: &str) -> Result<MediaMetadata, String> {
+        // Iterate through all registered extractors until one succeeds.
         for extractor in &self.extractors {
             if let Some(metadata) = extractor.extract(url) {
                 return Ok(metadata);
             }
         }
+        // If no extractor matched, return an error.
         Err(format!("No supported platform found for URL: {}", url))
     }
 }
@@ -94,7 +117,7 @@ impl PlatformRegistry {
 struct YouTubeExtractor;
 impl PlatformExtractor for YouTubeExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
-        // Standard YouTube video URL
+        // Standard YouTube video URL (e.g., youtube.com/watch?v=...)
         if url.contains("youtube.com/watch") {
             if let Some(v_idx) = url.find("v=") {
                 let id = clean_id(&url[v_idx + 2..]);
@@ -102,13 +125,13 @@ impl PlatformExtractor for YouTubeExtractor {
                     return Some(MediaMetadata { platform: "YouTube".to_string(), media_type: "Video".to_string(), media_id: id });
                 }
             }
-        // Shortened youtu.be URL
+        // Shortened youtu.be URL (e.g., youtu.be/...)
         } else if let Some(be_idx) = url.find("youtu.be/") {
             let id = clean_id(&url[be_idx + 9..]);
             if !id.is_empty() {
                 return Some(MediaMetadata { platform: "YouTube".to_string(), media_type: "Video".to_string(), media_id: id });
             }
-        // YouTube Shorts URL
+        // YouTube Shorts URL (e.g., youtube.com/shorts/...)
         } else if let Some(short_idx) = url.find("youtube.com/shorts/") {
             let id = clean_id(&url[short_idx + 19..]);
             if !id.is_empty() {
@@ -141,6 +164,7 @@ struct InstagramExtractor;
 impl PlatformExtractor for InstagramExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
         if url.contains("instagram.com/") {
+            // Check for various Instagram media markers
             let markers = [("/p/", "Post"), ("/reel/", "Reel"), ("/tv/", "IGTV")];
             for (marker, m_type) in markers {
                 if let Some(idx) = url.find(marker) {
@@ -160,6 +184,7 @@ struct TikTokExtractor;
 impl PlatformExtractor for TikTokExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
         if url.contains("tiktok.com/") {
+            // Check for standard TikTok video paths
             if let Some(video_idx) = url.find("/video/") {
                 let id = clean_id(&url[video_idx + 7..]);
                 if !id.is_empty() {
@@ -193,20 +218,20 @@ struct TwitchExtractor;
 impl PlatformExtractor for TwitchExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
         if url.contains("twitch.tv/") {
-            // VOD
+            // Check for VODs
             if let Some(videos_idx) = url.find("/videos/") {
                 let id = clean_id(&url[videos_idx + 8..]);
                 if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Video".to_string(), media_id: id }); }
-            // Clip within channel
+            // Check for a clip within a channel path
             } else if let Some(clip_idx) = url.find("clip/") {
                 let id = clean_id(&url[clip_idx + 5..]);
                 if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Clip".to_string(), media_id: id }); }
-            // Dedicated clips domain
+            // Check the dedicated clips domain
             } else if url.contains("clips.twitch.tv/") {
                 let id_part = url.split("clips.twitch.tv/").nth(1).unwrap_or("");
                 let id = clean_id(id_part);
                 if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Clip".to_string(), media_id: id }); }
-            // Live stream (channel name)
+            // Default to assuming a Live stream (channel name)
             } else {
                 let host_idx = url.find("twitch.tv/").unwrap();
                 let channel = clean_id(&url[host_idx + 10..]);
@@ -222,6 +247,7 @@ struct SpotifyExtractor;
 impl PlatformExtractor for SpotifyExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
         if url.contains("spotify.com/") {
+            // Check for various Spotify media markers
             let markers = [("/track/", "Track"), ("/album/", "Album"), ("/playlist/", "Playlist"), ("/episode/", "Episode")];
             for (marker, m_type) in markers {
                 if let Some(idx) = url.find(marker) {
@@ -241,7 +267,7 @@ impl PlatformExtractor for VimeoExtractor {
         if url.contains("vimeo.com/") {
             let host_idx = url.find("vimeo.com/").unwrap();
             let id = clean_id(&url[host_idx + 10..]);
-            // Ensure the extracted ID is numeric, as Vimeo video IDs are numbers
+            // Ensure the extracted ID is numeric, as Vimeo video IDs are typically numbers
             if !id.is_empty() && id.chars().all(char::is_numeric) {
                 return Some(MediaMetadata { platform: "Vimeo".to_string(), media_type: "Video".to_string(), media_id: id });
             }
@@ -257,6 +283,7 @@ impl PlatformExtractor for SoundCloudExtractor {
         if url.contains("soundcloud.com/") {
             let host_idx = url.find("soundcloud.com/").unwrap();
             let path = &url[host_idx + 15..];
+            // Split path into parts to extract artist and track name
             let parts: Vec<&str> = path.split('?').next().unwrap_or("").split('#').next().unwrap_or("").split('/').collect();
             
             // Expected format: soundcloud.com/{artist}/{track}

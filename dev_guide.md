@@ -160,3 +160,241 @@ mod tests {
     }
 }
 ```
+
+---
+
+## Language Bindings & Usage Examples
+
+`mm-dlp` can be used from various programming languages through its FFI bindings. The core function exposed is `extract_metadata`, which takes a URL and returns a JSON string containing the extracted `MediaMetadata`.
+
+Below are examples for each supported language.
+
+### Python
+
+```python
+import ctypes
+import json
+
+# Load the shared library
+lib = ctypes.CDLL("./libmm_dlp.so")
+
+# Define the function signature
+lib.extract_metadata.argtypes = [ctypes.c_char_p]
+lib.extract_metadata.restype = ctypes.c_char_p
+
+def extract(url):
+    result_ptr = lib.extract_metadata(url.encode('utf-8'))
+    if result_ptr:
+        result_json = ctypes.string_at(result_ptr).decode('utf-8')
+        # Remember to free the string memory from Rust
+        lib.free_string(result_ptr)
+        return json.loads(result_json)
+    return None
+
+# Example usage
+url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+metadata = extract(url)
+if metadata:
+    print(f"Platform: {metadata['platform']}, ID: {metadata['media_id']}")
+```
+
+### JavaScript (Node.js)
+
+```javascript
+const ffi = require('ffi-napi');
+const ref = require('ref-napi');
+
+// Define the C string type
+const charPtr = ref.refType('char');
+
+const lib = ffi.Library('libmm_dlp', {
+  'extract_metadata': [charPtr, ['string']],
+  'free_string': ['void', [charPtr]]
+});
+
+function extract(url) {
+  const resultPtr = lib.extract_metadata(url);
+  if (!resultPtr.isNull()) {
+    const resultJson = ref.readCString(resultPtr, 0);
+    lib.free_string(resultPtr);
+    return JSON.parse(resultJson);
+  }
+  return null;
+}
+
+// Example usage
+const url = "https://twitter.com/jack/status/20";
+const metadata = extract(url);
+if (metadata) {
+  console.log(`Platform: ${metadata.platform}, ID: ${metadata.media_id}`);
+}
+```
+
+### Java
+
+```java
+import com.sun.jna.Library;
+import com.sun.jna.Native;
+import com.sun.jna.Pointer;
+
+public class MmDlp {
+
+    public interface MmDlpLib extends Library {
+        MmDlpLib INSTANCE = Native.load("mm_dlp", MmDlpLib.class);
+
+        Pointer extract_metadata(String url);
+        void free_string(Pointer ptr);
+    }
+
+    public static String extract(String url) {
+        Pointer resultPtr = MmDlpLib.INSTANCE.extract_metadata(url);
+        if (resultPtr != null) {
+            String resultJson = resultPtr.getString(0);
+            MmDlpLib.INSTANCE.free_string(resultPtr);
+            return resultJson;
+        }
+        return null;
+    }
+
+    public static void main(String[] args) {
+        String url = "https://www.instagram.com/p/CXYZ123abc/";
+        String metadataJson = extract(url);
+        if (metadataJson != null) {
+            // Using a JSON library like Gson or Jackson is recommended
+            System.out.println(metadataJson);
+        }
+    }
+}
+```
+
+### Kotlin
+
+```kotlin
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+
+interface MmDlpLib : Library {
+    fun extract_metadata(url: String): Pointer?
+    fun free_string(ptr: Pointer)
+}
+
+object MmDlp {
+    private val lib = Native.load("mm_dlp", MmDlpLib::class.java)
+
+    fun extract(url: String): String? {
+        val resultPtr = lib.extract_metadata(url)
+        return resultPtr?.let {
+            val json = it.getString(0)
+            lib.free_string(it)
+            json
+        }
+    }
+}
+
+fun main() {
+    val url = "https://www.tiktok.com/@scout2015/video/6798122930527931653"
+    val metadataJson = MmDlp.extract(url)
+    metadataJson?.let {
+        println(it)
+    }
+}
+```
+
+### C#
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+public static class MmDlp
+{
+    [DllImport("mm_dlp", EntryPoint = "extract_metadata")]
+    private static extern IntPtr ExtractMetadata(string url);
+
+    [DllImport("mm_dlp", EntryPoint = "free_string")]
+    private static extern void FreeString(IntPtr ptr);
+
+    public static string Extract(string url)
+    {
+        IntPtr resultPtr = ExtractMetadata(url);
+        if (resultPtr != IntPtr.Zero)
+        {
+            string resultJson = Marshal.PtrToStringAnsi(resultPtr);
+            FreeString(resultPtr);
+            return resultJson;
+        }
+        return null;
+    }
+
+    public static void Main(string[] args)
+    {
+        string url = "https://soundcloud.com/official-rick-astley/never-gonna-give-you-up-4";
+        string metadataJson = Extract(url);
+        if (metadataJson != null)
+        {
+            Console.WriteLine(metadataJson);
+        }
+    }
+}
+```
+
+### Dart
+
+```dart
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
+
+// Define the function signatures from the Rust library
+typedef ExtractMetadataC = Pointer<Utf8> Function(Pointer<Utf8> url);
+typedef ExtractMetadataDart = Pointer<Utf8> Function(Pointer<Utf8> url);
+
+typedef FreeStringC = Void Function(Pointer<Utf8> ptr);
+typedef FreeStringDart = void Function(Pointer<Utf8> ptr);
+
+void main() {
+  final dylib = DynamicLibrary.open('libmm_dlp.so');
+
+  final extractMetadata = dylib.lookupFunction<ExtractMetadataC, ExtractMetadataDart>('extract_metadata');
+  final freeString = dylib.lookupFunction<FreeStringC, FreeStringDart>('free_string');
+
+  final url = 'https://vimeo.com/123456789';
+  final urlPtr = url.toNativeUtf8();
+  
+  final resultPtr = extractMetadata(urlPtr);
+  
+  if (resultPtr != nullptr) {
+    final resultJson = resultPtr.toDartString();
+    print(resultJson);
+    freeString(resultPtr);
+  }
+
+  malloc.free(urlPtr);
+}
+```
+
+### C
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+// Declare the functions from the Rust library
+char* extract_metadata(const char* url);
+void free_string(char* ptr);
+
+int main() {
+    const char* url = "https://www.twitch.tv/videos/123456789";
+    char* result_json = extract_metadata(url);
+
+    if (result_json != NULL) {
+        printf("Extracted: %s\n", result_json);
+        // IMPORTANT: Free the memory allocated by Rust
+        free_string(result_json);
+    } else {
+        printf("Failed to extract metadata.\n");
+    }
+
+    return 0;
+}
+```
