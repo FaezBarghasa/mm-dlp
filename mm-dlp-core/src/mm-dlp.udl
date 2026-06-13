@@ -1,68 +1,68 @@
 namespace mmdlp;
 
-    // ==========================================
-    // Core Data Structures
-    // ==========================================
+// ==========================================
+// Core Data Structures
+// ==========================================
 
-    dictionary MediaFormat {
-        string format_id;
-        string url;
-        string ext;
-        u32? width;
-        u32? height;
-        string? vcodec;
-        string? acodec;
-        u64? filesize;
-    };
+dictionary MediaFormat {
+    string format_id;
+    string url;
+    string ext;
+    u32? width;
+    u32? height;
+    string? vcodec;
+    string? acodec;
+    u64? filesize;
+};
 
-    dictionary MediaInfo {
-        string id;
-        string title;
-        string? description;
-        string? uploader;
-        u32? duration;
-        sequence<MediaFormat> formats;
-    };
+dictionary MediaInfo {
+    string id;
+    string title;
+    string? description;
+    string? uploader;
+    u32? duration;
+    sequence<MediaFormat> formats;
+};
 
-    dictionary FfmpegProgress {
-        u64? frame;
-        f32? fps;
-        f32? q;
-        u64? size_kb;
-        string? time;
-        string? bitrate;
-        f32? speed;
-    };
+dictionary FfmpegProgress {
+    u64? frame;
+    f32? fps;
+    f32? q;
+    u64? size_kb;
+    string? time;
+    string? bitrate;
+    f32? speed;
+};
 
-    // ==========================================
-    // Exceptions & Callbacks
-    // ==========================================
+// ==========================================
+// Exceptions & Callbacks
+// ==========================================
 
-    [Error]
-    enum EngineError {
-        "FileSystemError",
-        "DecryptionError",
-        "DatabaseError",
-        "OsApiError",
-    };
+[Error]
+enum EngineError {
+    "FileSystemError",
+    "DecryptionError",
+    "DatabaseError",
+    "OsApiError",
+};
 
-    // Maps Rust-native async behaviors into cross-platform compatible delegates
-    callback interface DownloadProgressCallback {
-        void on_progress(FfmpegProgress progress);
-        void on_complete();
-        void on_error(EngineError error);
-    };
+// Maps Rust-native async behaviors into cross-platform compatible delegates
+callback interface DownloadProgressCallback {
+    void on_progress(FfmpegProgress progress);
+    void on_complete();
+    void on_error(EngineError error);
+};
 
-    // ==========================================
-    // Main Engine Interface
-    // ==========================================
+// ==========================================
+// Main Engine Interface
+// ==========================================
 
-    interface MmDlpEngine {
-        constructor();
+interface MmDlpEngine {
+    constructor();
 
-        [Throws=EngineError]
-        MediaInfo extract_metadata(string url);
+    [Throws=EngineError]
+    MediaInfo extract_metadata(string url);
 
-        [Throws=EngineError]
-        void download_and_mux(string video_url, string audio_url, string output_path, DownloadProgressCallback callback);
-    };
+    [Throws=EngineError]
+    void download_and_mux(string video_url, string audio_url, string output_path, DownloadProgressCallback callback);
+};
