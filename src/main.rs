@@ -1,9 +1,14 @@
 //! # mm-dlp
 //!
-//! A library for downloading and managing media files.
+//! A high-performance core engine and library for downloading and managing media files.
+//! This crate provides the primary routing and parsing mechanisms to extract media
+//! metadata across multiple supported platforms via a unified trait-based dispatch system.
 
-// This is the main entry point of the application.
+/// The main entry point of the default `mm-dlp` binary.
+/// 
+/// Currently, this serves as a basic initializer. The core extraction logic 
+/// and FFI bindings are predominantly managed within the respective library modules.
 fn main() {
-    // Print a "Hello, world!" message to the console.
+    // Output an initialization message to verify the application is executing correctly.
     println!("Hello, world!");
 }
