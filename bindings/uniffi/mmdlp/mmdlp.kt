@@ -671,17 +671,17 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckApiChecksums(this)
     }
     external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux(
-    ): Short
+    ): Int
     external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata(
-    ): Short
+    ): Int
     external fun uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new(
-    ): Short
+    ): Int
     external fun uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress(
-    ): Short
+    ): Int
     external fun uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete(
-    ): Short
+    ): Int
     external fun uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error(
-    ): Short
+    ): Int
     external fun ffi_mm_dlp_core_uniffi_contract_version(
     ): Int
 
@@ -728,7 +728,7 @@ internal object UniffiLib {
     external fun ffi_mm_dlp_core_rust_future_free_u8(`handle`: Long,
     ): Unit
     external fun ffi_mm_dlp_core_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
+    ): Int
     external fun ffi_mm_dlp_core_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_mm_dlp_core_rust_future_cancel_i8(`handle`: Long,
@@ -744,7 +744,7 @@ internal object UniffiLib {
     external fun ffi_mm_dlp_core_rust_future_free_u16(`handle`: Long,
     ): Unit
     external fun ffi_mm_dlp_core_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
+    ): Int
     external fun ffi_mm_dlp_core_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
     external fun ffi_mm_dlp_core_rust_future_cancel_i16(`handle`: Long,
@@ -832,22 +832,22 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux() != 7561.toShort()) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux() != 7561) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 3588.toShort()) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 3588) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 13756.toShort()) {
+    if (lib.uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 13756) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress() != 47078.toShort()) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress() != 47078) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete() != 30303.toShort()) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete() != 30303) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error() != 24966.toShort()) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error() != 24966) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }

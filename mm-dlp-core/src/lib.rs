@@ -13,6 +13,7 @@ pub mod extractor;
 pub mod js;
 pub mod plugin;
 pub mod postprocessor;
+pub mod server;
 
 // Re-export all necessary types for UniFFI
 pub use crate::error::EngineError;
@@ -44,6 +45,20 @@ impl MmDlpEngine {
             .build()
             .unwrap_or_default();
         Self { client }
+    }
+
+    pub fn start_backend_server(&self, port: u16) {
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                if let Err(e) = crate::server::start_server(port).await {
+                    eprintln!("Failed to start backend server: {}", e);
+                }
+            });
+        });
     }
 
     pub fn extract_metadata(&self, url: String) -> Result<MediaInfo, EngineError> {
