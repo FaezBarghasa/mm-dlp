@@ -25,13 +25,13 @@ fileprivate extension RustBuffer {
     }
 
     static func from(_ ptr: UnsafeBufferPointer<UInt8>) -> RustBuffer {
-        try! rustCall { ffi_mm_dlp_core_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
+        try! rustCall { ffi_uniffi_mmdlp_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
     }
 
     // Frees the buffer in place.
     // The buffer must not be used after this is called.
     func deallocate() {
-        try! rustCall { ffi_mm_dlp_core_rustbuffer_free(self, $0) }
+        try! rustCall { ffi_uniffi_mmdlp_rustbuffer_free(self, $0) }
     }
 }
 
@@ -281,7 +281,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureMmDlpCoreInitialized()
+    uniffiEnsureUniffiMmdlpInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -425,6 +425,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
+    typealias FfiType = UInt16
+    typealias SwiftType = UInt16
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt16 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -525,6 +541,8 @@ public protocol MmDlpEngineProtocol: AnyObject, Sendable {
     
     func extractMetadata(url: String) throws  -> MediaInfo
     
+    func startBackendServer(port: UInt16) 
+    
 }
 open class MmDlpEngine: MmDlpEngineProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -563,12 +581,12 @@ open class MmDlpEngine: MmDlpEngineProtocol, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_mm_dlp_core_fn_clone_mmdlpengine(self.handle, $0) }
+        return try! rustCall { uniffi_uniffi_mmdlp_fn_clone_mmdlpengine(self.handle, $0) }
     }
 public convenience init() {
     let handle =
         try! rustCall() {
-    uniffi_mm_dlp_core_fn_constructor_mmdlpengine_new($0
+    uniffi_uniffi_mmdlp_fn_constructor_mmdlpengine_new($0
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -580,14 +598,14 @@ public convenience init() {
             return
         }
 
-        try! rustCall { uniffi_mm_dlp_core_fn_free_mmdlpengine(handle, $0) }
+        try! rustCall { uniffi_uniffi_mmdlp_fn_free_mmdlpengine(handle, $0) }
     }
 
     
 
     
 open func downloadAndMux(videoUrl: String, audioUrl: String, outputPath: String, callback: DownloadProgressCallback)throws   {try rustCallWithError(FfiConverterTypeEngineError_lift) {
-    uniffi_mm_dlp_core_fn_method_mmdlpengine_download_and_mux(
+    uniffi_uniffi_mmdlp_fn_method_mmdlpengine_download_and_mux(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(videoUrl),
         FfiConverterString.lower(audioUrl),
@@ -599,11 +617,19 @@ open func downloadAndMux(videoUrl: String, audioUrl: String, outputPath: String,
     
 open func extractMetadata(url: String)throws  -> MediaInfo  {
     return try  FfiConverterTypeMediaInfo_lift(try rustCallWithError(FfiConverterTypeEngineError_lift) {
-    uniffi_mm_dlp_core_fn_method_mmdlpengine_extract_metadata(
+    uniffi_uniffi_mmdlp_fn_method_mmdlpengine_extract_metadata(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(url),$0
     )
 })
+}
+    
+open func startBackendServer(port: UInt16)  {try! rustCall() {
+    uniffi_uniffi_mmdlp_fn_method_mmdlpengine_start_backend_server(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt16.lower(port),$0
+    )
+}
 }
     
 
@@ -1119,7 +1145,7 @@ fileprivate struct UniffiCallbackInterfaceDownloadProgressCallback {
 }
 
 private func uniffiCallbackInitDownloadProgressCallback() {
-    uniffi_mm_dlp_core_fn_init_callback_vtable_downloadprogresscallback(UniffiCallbackInterfaceDownloadProgressCallback.vtablePtr)
+    uniffi_uniffi_mmdlp_fn_init_callback_vtable_downloadprogresscallback(UniffiCallbackInterfaceDownloadProgressCallback.vtablePtr)
 }
 
 // FfiConverter protocol for callback interfaces
@@ -1314,26 +1340,29 @@ private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
     let bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
-    let scaffolding_contract_version = ffi_mm_dlp_core_uniffi_contract_version()
+    let scaffolding_contract_version = ffi_uniffi_mmdlp_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux() != 7561) {
+    if (uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_download_and_mux() != 15069) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 3588) {
+    if (uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_extract_metadata() != 7024) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 13756) {
+    if (uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_start_backend_server() != 21972) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress() != 47078) {
+    if (uniffi_uniffi_mmdlp_checksum_constructor_mmdlpengine_new() != 37368) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete() != 30303) {
+    if (uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_progress() != 52361) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error() != 24966) {
+    if (uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_complete() != 58052) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_error() != 19659) {
         return InitializationResult.apiChecksumMismatch
     }
 
@@ -1343,7 +1372,7 @@ private let initializationResult: InitializationResult = {
 
 // Make the ensure init function public so that other modules which have external type references to
 // our types can call it.
-public func uniffiEnsureMmDlpCoreInitialized() {
+public func uniffiEnsureUniffiMmdlpInitialized() {
     switch initializationResult {
     case .ok:
         break
