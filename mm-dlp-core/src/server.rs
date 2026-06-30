@@ -1,9 +1,8 @@
 use actix_web::{web, App, HttpServer, HttpResponse, Responder, post, get};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use surrealdb::engine::local::Mem;
 use surrealdb::Surreal;
-use tokio::sync::Mutex;
 
 lazy_static::lazy_static! {
     static ref DB: Surreal<surrealdb::engine::local::Db> = Surreal::init();
@@ -76,7 +75,8 @@ async fn run_sql(body: String) -> impl Responder {
             // SurrealDB's queries return results for each statement.
             // For simplicity, we can serialize the query response.
             let mut json_results = Vec::new();
-            for i in 0.. {
+            let mut i: usize = 0;
+            loop {
                 match response.take::<serde_json::Value>(i) {
                     Ok(val) => {
                         json_results.push(serde_json::json!({
@@ -84,6 +84,7 @@ async fn run_sql(body: String) -> impl Responder {
                             "time": "1ms",
                             "result": val
                         }));
+                        i += 1;
                     }
                     Err(_) => break,
                 }

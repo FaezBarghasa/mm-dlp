@@ -1,7 +1,7 @@
 [package]
 name = "mm-dlp-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -30,7 +30,7 @@ async-trait = "0.1"
 regex = "1.10"
 libc = "0.2"
 memmap2 = "0.9"
-boring = "4.22.0"
+boring = "5.1.0"
 quiche = { version = "0.29.1", features = ["boring"] }
 rquickjs = { version = "0.12.0" }
 wasmer = "7.1.0"
@@ -47,7 +47,7 @@ hex = "0.4"
 h2 = "0.4"
 lazy_static = "1.4.0"
 actix-web = "4"
-surrealdb = { version = "1.5.6", features = ["kv-mem"] }
+surrealdb = { version = "3.0.0-beta.1", default-features = false, features = ["kv-mem", "kv-surrealkv"] }
 
 [dev-dependencies]
 uniffi_bindgen = "0.31.2"
