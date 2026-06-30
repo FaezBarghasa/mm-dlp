@@ -77,12 +77,21 @@ async fn run_sql(body: String) -> impl Responder {
             let mut json_results = Vec::new();
             let mut i: usize = 0;
             loop {
-                match response.take::<serde_json::Value>(i) {
-                    Ok(val) => {
+                match response.take::<Option<serde_json::Value>>(i) {
+                    Ok(Some(val)) => {
                         json_results.push(serde_json::json!({
                             "status": "OK",
                             "time": "1ms",
                             "result": val
+                        }));
+                        i += 1;
+                    }
+                    Ok(None) => {
+                        // Empty query result (e.g. no rows returned for this index)
+                        json_results.push(serde_json::json!({
+                            "status": "OK",
+                            "time": "1ms",
+                            "result": []
                         }));
                         i += 1;
                     }

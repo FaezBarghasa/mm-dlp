@@ -69,4 +69,6 @@ interface MmDlpEngine {
 
     [Throws=EngineError]
     void download_and_mux(string video_url, string audio_url, string output_path, DownloadProgressCallback callback);
+
+    void start_backend_server(u16 port);
 };
