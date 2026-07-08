@@ -59,7 +59,7 @@ open class RustBuffer : Structure() {
     companion object {
         internal fun alloc(size: ULong = 0UL) = uniffiRustCall() { status ->
             // Note: need to convert the size to a `Long` value to make this work with JVM.
-            UniffiLib.ffi_uniffi_mmdlp_rustbuffer_alloc(size.toLong(), status)
+            UniffiLib.ffi_mm_dlp_core_rustbuffer_alloc(size.toLong(), status)
         }.also {
             if(it.data == null) {
                throw RuntimeException("RustBuffer.alloc() returned null data pointer (size=${size})")
@@ -75,7 +75,7 @@ open class RustBuffer : Structure() {
         }
 
         internal fun free(buf: RustBuffer.ByValue) = uniffiRustCall() { status ->
-            UniffiLib.ffi_uniffi_mmdlp_rustbuffer_free(buf, status)
+            UniffiLib.ffi_mm_dlp_core_rustbuffer_free(buf, status)
         }
     }
 
@@ -98,6 +98,43 @@ internal open class ForeignBytes : Structure() {
     @JvmField var data: Pointer? = null
 
     class ByValue : ForeignBytes(), Structure.ByValue
+}
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Only `lower` is valid — zero-copy byte buffers only flow foreign -> Rust,
+// and only in argument position. `lift`, `read`, `write`, and
+// `allocationSize` have no sound implementation here and all panic at
+// runtime. The `FfiConverter` interface is implemented so that the
+// compiler enforces the full method set (rather than relying on eyeball).
+//
+// The provided `ByteBuffer` MUST be direct — only direct buffers have a
+// stable native address that JNA can expose via `getDirectBufferPointer`.
+// The returned `ForeignBytes.ByValue` is only valid for the duration of
+// the FFI call; the Rust side treats it as a borrow.
+internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, ForeignBytes.ByValue> {
+    override fun lower(value: java.nio.ByteBuffer): ForeignBytes.ByValue {
+        require(value.isDirect) { "UniFFI zero-copy &[u8] requires a direct ByteBuffer. Use ByteBuffer.allocateDirect()." }
+        val remaining = value.remaining()
+        val fb = ForeignBytes.ByValue()
+        fb.len = remaining
+        // Zero-length direct buffers: skip getDirectBufferPointer (platform-variable behavior)
+        // and pass null. The Rust side treats (null, 0) as &[].
+        fb.data = if (remaining == 0) null else com.sun.jna.Native.getDirectBufferPointer(value)
+        return fb
+    }
+
+    override fun lift(value: ForeignBytes.ByValue): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+
+    override fun read(buf: java.nio.ByteBuffer): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun write(value: java.nio.ByteBuffer, buf: java.nio.ByteBuffer): Unit =
+        error("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+
+    override fun allocationSize(value: java.nio.ByteBuffer): ULong =
+        error("ByRef bytes have no RustBuffer allocation size: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
 }
 /**
  * The FfiConverter interface handles converter types to and from the FFI
@@ -670,21 +707,21 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
-    external fun uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_download_and_mux(
+    external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux(
     ): Int
-    external fun uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_extract_metadata(
+    external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata(
     ): Int
-    external fun uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_start_backend_server(
+    external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_start_backend_server(
     ): Int
-    external fun uniffi_uniffi_mmdlp_checksum_constructor_mmdlpengine_new(
+    external fun uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new(
     ): Int
-    external fun uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_progress(
+    external fun uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress(
     ): Int
-    external fun uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_complete(
+    external fun uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete(
     ): Int
-    external fun uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_error(
+    external fun uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error(
     ): Int
-    external fun ffi_uniffi_mmdlp_uniffi_contract_version(
+    external fun ffi_mm_dlp_core_uniffi_contract_version(
     ): Int
 
         
@@ -703,123 +740,123 @@ internal object UniffiLib {
         uniffiCallbackInterfaceDownloadProgressCallback.register(this)
         
     }
-    external fun uniffi_uniffi_mmdlp_fn_clone_mmdlpengine(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_mm_dlp_core_fn_clone_mmdlpengine(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun uniffi_uniffi_mmdlp_fn_free_mmdlpengine(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_mm_dlp_core_fn_free_mmdlpengine(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_uniffi_mmdlp_fn_constructor_mmdlpengine_new(uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_mm_dlp_core_fn_constructor_mmdlpengine_new(uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun uniffi_uniffi_mmdlp_fn_method_mmdlpengine_download_and_mux(`ptr`: Long,`videoUrl`: RustBuffer.ByValue,`audioUrl`: RustBuffer.ByValue,`outputPath`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_download_and_mux(`ptr`: Long,`videoUrl`: RustBuffer.ByValue,`audioUrl`: RustBuffer.ByValue,`outputPath`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_uniffi_mmdlp_fn_method_mmdlpengine_extract_metadata(`ptr`: Long,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_extract_metadata(`ptr`: Long,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_uniffi_mmdlp_fn_method_mmdlpengine_start_backend_server(`ptr`: Long,`port`: Short,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_start_backend_server(`ptr`: Long,`port`: Short,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_uniffi_mmdlp_fn_init_callback_vtable_downloadprogresscallback(`vtable`: UniffiVTableCallbackInterfaceDownloadProgressCallback,
+    external fun uniffi_mm_dlp_core_fn_init_callback_vtable_downloadprogresscallback(`vtable`: UniffiVTableCallbackInterfaceDownloadProgressCallback,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_uniffi_mmdlp_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_uniffi_mmdlp_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun ffi_uniffi_mmdlp_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_uniffi_mmdlp_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_u8(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_u8(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_u8(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_u8(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_uniffi_mmdlp_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_i8(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_i8(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_i8(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_i8(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
-    external fun ffi_uniffi_mmdlp_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_u16(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_u16(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_u16(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_u16(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_uniffi_mmdlp_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_i16(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_i16(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_i16(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_i16(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Short
-    external fun ffi_uniffi_mmdlp_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_u32(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_u32(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_u32(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_u32(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_uniffi_mmdlp_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_i32(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_i32(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_i32(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_i32(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_uniffi_mmdlp_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_u64(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_u64(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_u64(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_u64(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun ffi_uniffi_mmdlp_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_i64(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_i64(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_i64(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_i64(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun ffi_uniffi_mmdlp_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_f32(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_f32(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_f32(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_f32(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Float
-    external fun ffi_uniffi_mmdlp_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_f64(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_f64(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_f64(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_f64(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Double
-    external fun ffi_uniffi_mmdlp_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_rust_buffer(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_rust_buffer(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_rust_buffer(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_rust_buffer(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_uniffi_mmdlp_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_mm_dlp_core_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_cancel_void(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_cancel_void(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_free_void(`handle`: Long,
+    external fun ffi_mm_dlp_core_rust_future_free_void(`handle`: Long,
     ): Unit
-    external fun ffi_uniffi_mmdlp_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_mm_dlp_core_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
 
         
@@ -829,32 +866,32 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
     // Get the bindings contract version from our ComponentInterface
     val bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
-    val scaffolding_contract_version = lib.ffi_uniffi_mmdlp_uniffi_contract_version()
+    val scaffolding_contract_version = lib.ffi_mm_dlp_core_uniffi_contract_version()
     if (bindings_contract_version != scaffolding_contract_version) {
         throw RuntimeException("UniFFI contract version mismatch: try cleaning and rebuilding your project")
     }
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_download_and_mux() != 15069) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux() != 7561) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_extract_metadata() != 7024) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 3588) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_start_backend_server() != 21972) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_start_backend_server() != 24010) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_uniffi_mmdlp_checksum_constructor_mmdlpengine_new() != 37368) {
+    if (lib.uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 13756) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_progress() != 52361) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress() != 47078) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_complete() != 58052) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete() != 30303) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_error() != 19659) {
+    if (lib.uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error() != 24966) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1332,7 +1369,7 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
     constructor() :
         this(UniffiWithHandle, 
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_uniffi_mmdlp_fn_constructor_mmdlpengine_new(
+    UniffiLib.uniffi_mm_dlp_core_fn_constructor_mmdlpengine_new(
     
         _status)
 }
@@ -1343,6 +1380,11 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
 
     private val wasDestroyed = AtomicBoolean(false)
     private val callCounter = AtomicLong(1)
+
+    /**
+     * Whether the current object has been destroyed and its reference is gone in the Rust side.
+     */
+    val uniffiIsDestroyed: Boolean get() = wasDestroyed.get()
 
     override fun destroy() {
         // Only allow a single call to this method.
@@ -1392,7 +1434,7 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
                 return;
             }
             uniffiRustCall { status ->
-                UniffiLib.uniffi_uniffi_mmdlp_fn_free_mmdlpengine(handle, status)
+                UniffiLib.uniffi_mm_dlp_core_fn_free_mmdlpengine(handle, status)
             }
         }
     }
@@ -1405,7 +1447,7 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
             throw InternalException("uniffiCloneHandle() called on NoHandle object");
         }
         return uniffiRustCall() { status ->
-            UniffiLib.uniffi_uniffi_mmdlp_fn_clone_mmdlpengine(handle, status)
+            UniffiLib.uniffi_mm_dlp_core_fn_clone_mmdlpengine(handle, status)
         }
     }
 
@@ -1414,9 +1456,13 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
         = 
     callWithHandle {
     uniffiRustCallWithError(EngineException) { _status ->
-    UniffiLib.uniffi_uniffi_mmdlp_fn_method_mmdlpengine_download_and_mux(
+    UniffiLib.uniffi_mm_dlp_core_fn_method_mmdlpengine_download_and_mux(
         it,
-        FfiConverterString.lower(`videoUrl`),FfiConverterString.lower(`audioUrl`),FfiConverterString.lower(`outputPath`),FfiConverterTypeDownloadProgressCallback.lower(`callback`),_status)
+        
+        FfiConverterString.lower(`videoUrl`),
+        FfiConverterString.lower(`audioUrl`),
+        FfiConverterString.lower(`outputPath`),
+        FfiConverterTypeDownloadProgressCallback.lower(`callback`),_status)
 }
     }
     
@@ -1427,8 +1473,9 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
             return FfiConverterTypeMediaInfo.lift(
     callWithHandle {
     uniffiRustCallWithError(EngineException) { _status ->
-    UniffiLib.uniffi_uniffi_mmdlp_fn_method_mmdlpengine_extract_metadata(
+    UniffiLib.uniffi_mm_dlp_core_fn_method_mmdlpengine_extract_metadata(
         it,
+        
         FfiConverterString.lower(`url`),_status)
 }
     }
@@ -1440,8 +1487,9 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
         = 
     callWithHandle {
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_uniffi_mmdlp_fn_method_mmdlpengine_start_backend_server(
+    UniffiLib.uniffi_mm_dlp_core_fn_method_mmdlpengine_start_backend_server(
         it,
+        
         FfiConverterUShort.lower(`port`),_status)
 }
     }
@@ -1837,7 +1885,7 @@ internal object uniffiCallbackInterfaceDownloadProgressCallback {
     // Registers the foreign callback with the Rust side.
     // This method is generated for each callback interface.
     internal fun register(lib: UniffiLib) {
-        lib.uniffi_uniffi_mmdlp_fn_init_callback_vtable_downloadprogresscallback(vtable)
+        lib.uniffi_mm_dlp_core_fn_init_callback_vtable_downloadprogresscallback(vtable)
     }
 }
 

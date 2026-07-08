@@ -1,8 +1,8 @@
 //! Round-trip serialization tests for JSON and XML playlist handlers.
 
-use uniffi_mmdlp::domain::playlist::{Playlist, Track};
-use uniffi_mmdlp::data::playlist::{json_handler, xml_handler};
-use uniffi_mmdlp::extractor::traits::AudioSource;
+use mm_dlp_core::domain::playlist::{Playlist, Track};
+use mm_dlp_core::data::playlist::{json_handler, xml_handler};
+use mm_dlp_core::extractor::traits::AudioSource;
 
 fn make_playlist(track_count: usize) -> Playlist {
     Playlist {

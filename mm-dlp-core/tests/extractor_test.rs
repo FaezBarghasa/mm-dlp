@@ -1,7 +1,7 @@
 // Integration tests for URL routing and extractor dispatch.
 // Network tests are marked #[ignore] to avoid CI failures.
 
-use uniffi_mmdlp::extractor::registry::route_url;
+use mm_dlp_core::extractor::registry::route_url;
 
 // ─── URL Routing Tests ──────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ fn test_route_url_empty_returns_none() {
 
 #[test]
 fn test_parse_soundcloud_search_mock() {
-    use uniffi_mmdlp::extractor::traits::{TrackMetadata, AudioSource};
+    use mm_dlp_core::extractor::traits::{TrackMetadata, AudioSource};
     use serde_json::json;
 
     let mock_response = json!({
@@ -78,7 +78,7 @@ fn test_parse_soundcloud_search_mock() {
 
 #[test]
 fn test_parse_youtube_stream_info_mock() {
-    use uniffi_mmdlp::extractor::traits::{StreamInfo, TrackMetadata, AudioSource};
+    use mm_dlp_core::extractor::traits::{StreamInfo, TrackMetadata, AudioSource};
     use serde_json::json;
 
     let mock_player = json!({
@@ -141,8 +141,8 @@ fn test_parse_youtube_stream_info_mock() {
 #[tokio::test]
 #[ignore = "requires network access"]
 async fn test_yt_stream_url_live() {
-    use uniffi_mmdlp::data::extractors::youtube::YouTubeMusicExtractor;
-    use uniffi_mmdlp::extractor::traits::{AudioPlatformExtractor, AudioQuality};
+    use mm_dlp_core::data::extractors::youtube::YouTubeMusicExtractor;
+    use mm_dlp_core::extractor::traits::{AudioPlatformExtractor, AudioQuality};
 
     let extractor = YouTubeMusicExtractor::new().expect("Failed to create YouTubeMusicExtractor");
     // Rick Astley - "Never Gonna Give You Up" — a reliably public video
@@ -156,8 +156,8 @@ async fn test_yt_stream_url_live() {
 #[tokio::test]
 #[ignore = "requires network access"]
 async fn test_soundcloud_search_live() {
-    use uniffi_mmdlp::data::extractors::soundcloud::SoundCloudExtractor;
-    use uniffi_mmdlp::extractor::traits::AudioPlatformExtractor;
+    use mm_dlp_core::data::extractors::soundcloud::SoundCloudExtractor;
+    use mm_dlp_core::extractor::traits::AudioPlatformExtractor;
 
     let extractor = SoundCloudExtractor::new().await.expect("Failed to create SoundCloudExtractor");
     let results = extractor.search("lofi hip hop").await;

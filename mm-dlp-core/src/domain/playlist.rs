@@ -6,7 +6,7 @@ pub struct Playlist {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    #[serde(rename = "track", default)]
+    #[serde(alias = "track", default)]
     pub tracks: Vec<Track>,
     pub source: AudioSource,
 }

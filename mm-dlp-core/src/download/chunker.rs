@@ -42,7 +42,7 @@ pub async fn download_chunk(
 
 /// Assembles all downloaded chunk files in the `.part` directory into the final file,
 /// then removes the chunk files and the `.part` directory.
-pub async fn assemble_chunks(destination_path: &Path, total_size: u64) -> Result<()> {
+pub async fn assemble_chunks(destination_path: &Path, _total_size: u64) -> Result<()> {
     let part_path = destination_path.with_extension("part");
     let mut final_file = OpenOptions::new()
         .create(true)
@@ -51,20 +51,42 @@ pub async fn assemble_chunks(destination_path: &Path, total_size: u64) -> Result
         .open(destination_path)
         .await?;
 
-    let num_chunks = total_size.div_ceil(CHUNK_SIZE);
-    for i in 0..num_chunks {
-        let chunk_path = part_path.join(format!("chunk_{}", i));
-        let mut chunk_file = File::open(&chunk_path)
-            .await
-            .map_err(|e| anyhow!("Failed to open chunk {}: {}", i, e))?;
+    let mut dir = fs::read_dir(&part_path).await?;
+    let mut chunks = Vec::new();
+    while let Some(entry) = dir.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                if file_name.starts_with("chunk_") {
+                    if let Ok(index) = file_name["chunk_".len()..].parse::<usize>() {
+                        chunks.push((index, path));
+                    }
+                }
+            }
+        }
+    }
+
+    if chunks.is_empty() {
+        return Err(anyhow!("No chunks found in part directory"));
+    }
+
+    chunks.sort_by_key(|(index, _)| *index);
+
+    for (i, (index, _)) in chunks.iter().enumerate() {
+        if *index != i {
+            return Err(anyhow!("Missing chunk index: expected chunk_{}, but got chunk_{}", i, index));
+        }
+    }
+
+    for (_, chunk_path) in &chunks {
+        let mut chunk_file = File::open(chunk_path).await?;
         let mut buffer = Vec::new();
         chunk_file.read_to_end(&mut buffer).await?;
         final_file.write_all(&buffer).await?;
-        fs::remove_file(&chunk_path).await?;
+        fs::remove_file(chunk_path).await?;
     }
 
     final_file.flush().await?;
-    // Drop the file handle before removing the directory
     drop(final_file);
 
     fs::remove_dir_all(&part_path).await?;

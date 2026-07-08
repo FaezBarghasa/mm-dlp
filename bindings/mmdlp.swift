@@ -25,19 +25,65 @@ fileprivate extension RustBuffer {
     }
 
     static func from(_ ptr: UnsafeBufferPointer<UInt8>) -> RustBuffer {
-        try! rustCall { ffi_uniffi_mmdlp_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
+        try! rustCall { ffi_mm_dlp_core_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
     }
 
     // Frees the buffer in place.
     // The buffer must not be used after this is called.
     func deallocate() {
-        try! rustCall { ffi_uniffi_mmdlp_rustbuffer_free(self, $0) }
+        try! rustCall { ffi_mm_dlp_core_rustbuffer_free(self, $0) }
     }
 }
 
 fileprivate extension ForeignBytes {
     init(bufferPointer: UnsafeBufferPointer<UInt8>) {
         self.init(len: Int32(bufferPointer.count), data: bufferPointer.baseAddress)
+    }
+
+    init(rawBufferPointer: UnsafeRawBufferPointer) {
+        self.init(
+            len: Int32(rawBufferPointer.count),
+            data: rawBufferPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+        )
+    }
+}
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Conforms to `FfiConverter` so the compiler enforces the full converter
+// method set. Only the scope-bound `lower(_:_body:)` overload is sound —
+// zero-copy byte buffers only flow foreign -> Rust, and only in argument
+// position. The four protocol-witness methods (`lift`, `lower`, `read`,
+// `write`) `fatalError` at runtime if anyone reaches them.
+//
+// The scope-bound `lower` takes a closure because the `ForeignBytes`
+// pointer is only guaranteed valid for the duration of
+// `Data.withUnsafeBytes`. Callers must run the full FFI call inside
+// the closure body.
+fileprivate enum FfiConverterByRefBytes: FfiConverter {
+    typealias SwiftType = Data
+    typealias FfiType = ForeignBytes
+
+    static func lower<R>(_ value: Data, _ body: (ForeignBytes) throws -> R) rethrows -> R {
+        return try value.withUnsafeBytes { rawBuf in
+            try body(ForeignBytes(rawBufferPointer: rawBuf))
+        }
+    }
+
+    static func lower(_ value: Data) -> ForeignBytes {
+        fatalError("ByRef bytes cannot use the plain lower: returning ForeignBytes escapes the Data.withUnsafeBytes scope. Use the scope-bound lower(_:_body:) overload instead.")
+    }
+
+    static func lift(_ value: ForeignBytes) throws -> Data {
+        fatalError("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+    }
+
+    static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        fatalError("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+    }
+
+    static func write(_ value: Data, into buf: inout [UInt8]) {
+        fatalError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
     }
 }
 
@@ -281,7 +327,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureUniffiMmdlpInitialized()
+    uniffiEnsureMmDlpCoreInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -581,12 +627,13 @@ open class MmDlpEngine: MmDlpEngineProtocol, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_uniffi_mmdlp_fn_clone_mmdlpengine(self.handle, $0) }
+        return try! rustCall { uniffi_mm_dlp_core_fn_clone_mmdlpengine(self.handle, $0) }
     }
 public convenience init() {
     let handle =
         try! rustCall() {
-    uniffi_uniffi_mmdlp_fn_constructor_mmdlpengine_new($0
+        uniffiCallStatus in
+    uniffi_mm_dlp_core_fn_constructor_mmdlpengine_new(uniffiCallStatus
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -598,36 +645,39 @@ public convenience init() {
             return
         }
 
-        try! rustCall { uniffi_uniffi_mmdlp_fn_free_mmdlpengine(handle, $0) }
+        try! rustCall { uniffi_mm_dlp_core_fn_free_mmdlpengine(handle, $0) }
     }
 
     
 
     
 open func downloadAndMux(videoUrl: String, audioUrl: String, outputPath: String, callback: DownloadProgressCallback)throws   {try rustCallWithError(FfiConverterTypeEngineError_lift) {
-    uniffi_uniffi_mmdlp_fn_method_mmdlpengine_download_and_mux(
+        uniffiCallStatus in
+    uniffi_mm_dlp_core_fn_method_mmdlpengine_download_and_mux(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(videoUrl),
         FfiConverterString.lower(audioUrl),
         FfiConverterString.lower(outputPath),
-        FfiConverterCallbackInterfaceDownloadProgressCallback_lower(callback),$0
+        FfiConverterCallbackInterfaceDownloadProgressCallback_lower(callback),uniffiCallStatus
     )
 }
 }
     
 open func extractMetadata(url: String)throws  -> MediaInfo  {
     return try  FfiConverterTypeMediaInfo_lift(try rustCallWithError(FfiConverterTypeEngineError_lift) {
-    uniffi_uniffi_mmdlp_fn_method_mmdlpengine_extract_metadata(
+        uniffiCallStatus in
+    uniffi_mm_dlp_core_fn_method_mmdlpengine_extract_metadata(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(url),$0
+        FfiConverterString.lower(url),uniffiCallStatus
     )
 })
 }
     
 open func startBackendServer(port: UInt16)  {try! rustCall() {
-    uniffi_uniffi_mmdlp_fn_method_mmdlpengine_start_backend_server(
+        uniffiCallStatus in
+    uniffi_mm_dlp_core_fn_method_mmdlpengine_start_backend_server(
             self.uniffiCloneHandle(),
-        FfiConverterUInt16.lower(port),$0
+        FfiConverterUInt16.lower(port),uniffiCallStatus
     )
 }
 }
@@ -902,7 +952,8 @@ public func FfiConverterTypeMediaInfo_lower(_ value: MediaInfo) -> RustBuffer {
 }
 
 
-public enum EngineError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+public 
+enum EngineError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
     
     
@@ -1145,7 +1196,7 @@ fileprivate struct UniffiCallbackInterfaceDownloadProgressCallback {
 }
 
 private func uniffiCallbackInitDownloadProgressCallback() {
-    uniffi_uniffi_mmdlp_fn_init_callback_vtable_downloadprogresscallback(UniffiCallbackInterfaceDownloadProgressCallback.vtablePtr)
+    uniffi_mm_dlp_core_fn_init_callback_vtable_downloadprogresscallback(UniffiCallbackInterfaceDownloadProgressCallback.vtablePtr)
 }
 
 // FfiConverter protocol for callback interfaces
@@ -1340,29 +1391,29 @@ private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
     let bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
-    let scaffolding_contract_version = ffi_uniffi_mmdlp_uniffi_contract_version()
+    let scaffolding_contract_version = ffi_mm_dlp_core_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_download_and_mux() != 15069) {
+    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_and_mux() != 7561) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_extract_metadata() != 7024) {
+    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 3588) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_method_mmdlpengine_start_backend_server() != 21972) {
+    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_start_backend_server() != 24010) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_constructor_mmdlpengine_new() != 37368) {
+    if (uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 13756) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_progress() != 52361) {
+    if (uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_progress() != 47078) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_complete() != 58052) {
+    if (uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_complete() != 30303) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uniffi_mmdlp_checksum_method_downloadprogresscallback_on_error() != 19659) {
+    if (uniffi_mm_dlp_core_checksum_method_downloadprogresscallback_on_error() != 24966) {
         return InitializationResult.apiChecksumMismatch
     }
 
@@ -1372,7 +1423,7 @@ private let initializationResult: InitializationResult = {
 
 // Make the ensure init function public so that other modules which have external type references to
 // our types can call it.
-public func uniffiEnsureUniffiMmdlpInitialized() {
+public func uniffiEnsureMmDlpCoreInitialized() {
     switch initializationResult {
     case .ok:
         break

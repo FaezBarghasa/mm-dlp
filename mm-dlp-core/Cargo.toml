@@ -5,7 +5,7 @@ edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "uniffi_mmdlp"
+name = "mm_dlp_core"
 
 [dependencies]
 tokio = { version = "1.37", features = [
