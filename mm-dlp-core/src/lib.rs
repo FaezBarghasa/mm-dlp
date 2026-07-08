@@ -6,11 +6,12 @@
 uniffi::setup_scaffolding!();
 
 // Export all modules
-pub mod error;
 pub mod client;
 pub mod data;
+pub mod domain;
 pub mod download;
 pub mod downloader;
+pub mod error;
 pub mod extractor;
 pub mod ffi;
 pub mod js;

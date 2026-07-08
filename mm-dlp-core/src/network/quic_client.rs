@@ -25,13 +25,15 @@ impl QuicHttpClient {
         let mut roots = rustls::RootCertStore::empty();
         let native_certs = rustls_native_certs::load_native_certs()?;
         for cert in native_certs {
-            // `add_parsable_certificates` is the rustls 0.23 API.
+            // rustls 0.21 API: add() takes a &Certificate wrapping the DER bytes
             roots
-                .add(cert)
+                .add(&rustls::Certificate(cert.0))
                 .map_err(|e| anyhow!("Failed to add native certificate: {}", e))?;
         }
 
+        // rustls 0.21 API (matches quinn 0.11's bundled rustls version)
         let client_crypto = rustls::ClientConfig::builder()
+            .with_safe_defaults()
             .with_root_certificates(roots)
             .with_no_client_auth();
 
