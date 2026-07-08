@@ -1,5 +1,5 @@
 use mm_dlp_core::data::router::StreamRouter;
-use mm_dlp_core::domain::models::{AudioSource, AudioQuality};
+use mm_dlp_core::extractor::traits::{AudioSource, AudioQuality};
 
 #[tokio::test]
 #[ignore]

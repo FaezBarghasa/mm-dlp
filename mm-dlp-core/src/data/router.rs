@@ -1,5 +1,4 @@
-use crate::domain::models::{AudioSource, AudioQuality, StreamInfo};
-use crate::domain::extractor::PlatformExtractor;
+use crate::extractor::traits::{AudioSource, AudioQuality, StreamInfo, AudioPlatformExtractor};
 use crate::data::extractors::youtube::YouTubeMusicExtractor;
 use crate::data::extractors::soundcloud::SoundCloudExtractor;
 use anyhow::{anyhow, Result};

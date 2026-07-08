@@ -29,42 +29,20 @@ fn test_route_url_invalid_unknown() {
 #[tokio::test]
 async fn test_async_extract_metadata_youtube() {
     let client = Client::new();
-    let video_id = "dQw4w9WgXcQ";
-    let body = serde_json::json!({
-        "context": {
-            "client": {
-                "clientName": "WEB_REMIX",
-                "clientVersion": "1.20240624.01.00",
-                "hl": "en",
-                "gl": "US"
-            }
-        },
-        "videoId": video_id
-    });
-
     let res = client
-        .post("https://music.youtube.com/youtubei/v1/player")
-        .header("Content-Type", "application/json")
-        .header("User-Agent", "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip")
-        .header("X-Goog-Api-Format-Version", "1")
-        .header("X-YouTube-Client-Name", "21")
-        .header("X-YouTube-Client-Version", "7.27.52")
-        .header("x-goog-api-key", "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI")
-        .json(&body)
+        .get("https://open.spotify.com/embed/track/4PTG3Z6ehGkBF3zI7Ywt8D")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .send()
         .await
         .expect("Failed to send request");
 
-    let json: serde_json::Value = res.json().await.expect("Failed to parse JSON");
-    println!("Response keys: {:?}", json.as_object().map(|m| m.keys().collect::<Vec<_>>()));
+    let body = res.text().await.expect("Failed to get text");
+    println!("Body length: {}", body.len());
     
-    if let Some(playability) = json.get("playabilityStatus") {
-        println!("PlayabilityStatus: {}", serde_json::to_string_pretty(playability).unwrap());
-    }
-    
-    if let Some(streaming_data) = json.get("streamingData") {
-        println!("streamingData exists! Keys: {:?}", streaming_data.as_object().map(|m| m.keys().collect::<Vec<_>>()));
-    } else {
-        println!("NO streamingData found in the root response!");
+    // Find script tags
+    for line in body.lines() {
+        if line.contains("<script") && (line.contains("json") || line.contains("resource") || line.contains("Spotify")) {
+            println!("Script line: {}", &line[..200.min(line.len())]);
+        }
     }
 }

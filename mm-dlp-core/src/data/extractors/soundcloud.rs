@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use anyhow::{anyhow, Result};
-use crate::domain::extractor::PlatformExtractor;
-use crate::domain::models::{AudioQuality, StreamInfo, TrackMetadata, AudioSource};
+use crate::extractor::traits::{AudioPlatformExtractor, AudioQuality, StreamInfo, TrackMetadata, AudioSource};
 use serde_json::Value;
 use std::time::Duration;
 use regex::Regex;
@@ -37,7 +36,7 @@ impl SoundCloudExtractor {
 }
 
 #[async_trait]
-impl PlatformExtractor for SoundCloudExtractor {
+impl AudioPlatformExtractor for SoundCloudExtractor {
     async fn search(&self, query: &str) -> Result<Vec<TrackMetadata>> {
         let search_url = format!("https://api-v2.soundcloud.com/search/tracks?q={}&client_id={}", query, self.client_id);
         let response: Value = self.client.get(&search_url).send().await?.json().await?;
