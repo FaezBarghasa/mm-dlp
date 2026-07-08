@@ -29,11 +29,6 @@ pub enum ExtractorError {
     RateLimited(String),
 }
 
-impl From<ExtractorError> for anyhow::Error {
-    fn from(e: ExtractorError) -> Self {
-        anyhow::anyhow!("{}", e)
-    }
-}
 
 impl From<reqwest::Error> for ExtractorError {
     fn from(e: reqwest::Error) -> Self {

@@ -59,7 +59,7 @@ pub async fn download_to_temp_dir(
     let stream_url = Url::parse(&stream_info.stream_url)
         .map_err(|e| anyhow!("Invalid stream URL '{}': {}", stream_info.stream_url, e))?;
 
-    let mut progress_rx = download_manager.subscribe_progress();
+    let progress_rx = download_manager.subscribe_progress();
     download_manager
         .queue_download(stream_url, temp_path.clone())
         .await?;

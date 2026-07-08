@@ -23,17 +23,15 @@ pub struct QuicHttpClient {
 impl QuicHttpClient {
     pub fn new() -> Result<Self> {
         let mut roots = rustls::RootCertStore::empty();
-        let native_certs = rustls_native_certs::load_native_certs()?;
-        for cert in native_certs {
-            // rustls 0.21 API: add() takes a &Certificate wrapping the DER bytes
+        let certs_res = rustls_native_certs::load_native_certs();
+        for cert in certs_res.certs {
             roots
-                .add(&rustls::Certificate(cert.0))
+                .add(cert)
                 .map_err(|e| anyhow!("Failed to add native certificate: {}", e))?;
         }
 
-        // rustls 0.21 API (matches quinn 0.11's bundled rustls version)
+        // rustls 0.23 API (matches quinn 0.11's bundled rustls version)
         let client_crypto = rustls::ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(roots)
             .with_no_client_auth();
 
@@ -41,7 +39,9 @@ impl QuicHttpClient {
         transport_config
             .max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
 
-        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+        let quic_client_config = quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
+            .map_err(|e| anyhow!("Failed to build QUIC client crypto: {}", e))?;
+        let mut client_config = ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(Arc::new(transport_config));
 
         let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
@@ -153,7 +153,7 @@ impl QuicHttpClient {
             .await
             .map_err(|e| anyhow!("H3 recv_data failed: {}", e))?
         {
-            body_bytes.extend_from_slice(&chunk);
+            body_bytes.extend_from_slice(bytes::Buf::chunk(&chunk));
         }
 
         // Re-package as a reqwest Response for a uniform API surface

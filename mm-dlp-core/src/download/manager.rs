@@ -8,7 +8,7 @@ use thiserror::Error;
 use url::Url;
 use futures::stream::{self, StreamExt};
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum DownloadError {
     #[error("Network error: {0}")]
     Network(String),

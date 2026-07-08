@@ -13,6 +13,17 @@ pub enum AudioFormat {
     Mp3,
 }
 
+impl std::fmt::Display for AudioFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            AudioFormat::Flac => "flac",
+            AudioFormat::Wav => "wav",
+            AudioFormat::Mp3 => "mp3",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 pub async fn convert_format(
     input_path: &Path,
     output_path: &Path,

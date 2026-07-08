@@ -7,6 +7,7 @@ use crate::ffi::config;
 use crate::media::converter::AudioFormat as DomainAudioFormat;
 use crate::ffi::file_handoff::download_to_temp_dir;
 use crate::download::manager::DownloadManager;
+use crate::error::EngineError;
 use anyhow::Result;
 use std::panic::catch_unwind;
 use std::sync::Arc;
@@ -40,8 +41,8 @@ pub struct MmDlpApi {
 impl MmDlpApi {
     /// Constructs the API object, initialising all extractors.
     #[uniffi::constructor]
-    pub fn new() -> Result<Arc<Self>> {
-        let result = catch_unwind(|| {
+    pub fn new() -> Result<Arc<Self>, EngineError> {
+        let result = catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Arc<Self>> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -57,17 +58,17 @@ impl MmDlpApi {
                 router: Arc::new(router),
                 downloader: Arc::new(downloader),
             }))
-        });
+        }));
 
         match result {
-            Ok(inner) => inner,
-            Err(_) => Err(anyhow::anyhow!("MmDlpApi::new() panicked")),
+            Ok(inner) => inner.map_err(EngineError::from),
+            Err(_) => Err(EngineError::OsApiError("MmDlpApi::new() panicked".to_string())),
         }
     }
 
     /// Searches the given platform for tracks matching `query`.
-    pub fn search(&self, query: String, source: AudioSource) -> Result<Vec<TrackMetadata>> {
-        catch_unwind(|| {
+    pub fn search(&self, query: String, source: AudioSource) -> Result<Vec<TrackMetadata>, EngineError> {
+        catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TrackMetadata>> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -76,8 +77,9 @@ impl MmDlpApi {
             let domain_source: DomainAudioSource = source.into();
             let results = rt.block_on(self.router.search(&query, &domain_source))?;
             Ok(results.into_iter().map(TrackMetadata::from).collect())
-        })
+        }))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("search() panicked")))
+        .map_err(EngineError::from)
     }
 
     /// Downloads a track, processes it, and returns the absolute path of the output file.
@@ -88,8 +90,8 @@ impl MmDlpApi {
         quality: AudioQuality,
         format: Option<AudioFormat>,
         temp_dir: String,
-    ) -> Result<String> {
-        catch_unwind(|| {
+    ) -> Result<String, EngineError> {
+        catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<String> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -110,48 +112,53 @@ impl MmDlpApi {
                     .ok_or_else(|| anyhow::anyhow!("Output path is not valid UTF-8"))
                     .map(str::to_string)
             })
-        })
+        }))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("download_track() panicked")))
+        .map_err(EngineError::from)
     }
 
     /// Serialises a playlist to a JSON string.
-    pub fn export_playlist_json(&self, playlist: Playlist) -> Result<String> {
-        catch_unwind(|| {
+    pub fn export_playlist_json(&self, playlist: Playlist) -> Result<String, EngineError> {
+        catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<String> {
             let domain: DomainPlaylist = playlist.into();
             json_handler::export_to_json(&domain)
                 .map_err(|e| anyhow::anyhow!("{}", e))
-        })
+        }))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("export_playlist_json() panicked")))
+        .map_err(EngineError::from)
     }
 
     /// Deserialises a playlist from a JSON string.
-    pub fn import_playlist_json(&self, json: String) -> Result<Playlist> {
-        catch_unwind(|| {
+    pub fn import_playlist_json(&self, json: String) -> Result<Playlist, EngineError> {
+        catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Playlist> {
             let domain = json_handler::import_from_json(&json)
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             Ok(Playlist::from(domain))
-        })
+        }))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("import_playlist_json() panicked")))
+        .map_err(EngineError::from)
     }
 
     /// Serialises a playlist to an XML string.
-    pub fn export_playlist_xml(&self, playlist: Playlist) -> Result<String> {
-        catch_unwind(|| {
+    pub fn export_playlist_xml(&self, playlist: Playlist) -> Result<String, EngineError> {
+        catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<String> {
             let domain: DomainPlaylist = playlist.into();
             xml_handler::export_to_xml(&domain)
                 .map_err(|e| anyhow::anyhow!("{}", e))
-        })
+        }))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("export_playlist_xml() panicked")))
+        .map_err(EngineError::from)
     }
 
     /// Deserialises a playlist from an XML string.
-    pub fn import_playlist_xml(&self, xml: String) -> Result<Playlist> {
-        catch_unwind(|| {
+    pub fn import_playlist_xml(&self, xml: String) -> Result<Playlist, EngineError> {
+        catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Playlist> {
             let domain = xml_handler::import_from_xml(&xml)
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             Ok(Playlist::from(domain))
-        })
+        }))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("import_playlist_xml() panicked")))
+        .map_err(EngineError::from)
     }
 
     /// Enables or disables QUIC/HTTP3 globally. Takes effect on the next connection.
@@ -175,26 +182,3 @@ impl From<crate::extractor::traits::TrackMetadata> for TrackMetadata {
     }
 }
 
-impl From<DomainPlaylist> for Playlist {
-    fn from(p: DomainPlaylist) -> Self {
-        Self {
-            id: p.id,
-            name: p.name,
-            description: p.description,
-            tracks: p.tracks.into_iter().map(Into::into).collect(),
-            source: p.source.into(),
-        }
-    }
-}
-
-impl From<Playlist> for DomainPlaylist {
-    fn from(p: Playlist) -> Self {
-        Self {
-            id: p.id,
-            name: p.name,
-            description: p.description,
-            tracks: p.tracks.into_iter().map(Into::into).collect(),
-            source: p.source.into(),
-        }
-    }
-}

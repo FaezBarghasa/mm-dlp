@@ -61,12 +61,10 @@ pub async fn tag_audio_file(
             } else {
                 MimeType::Jpeg // Default assumption
             };
-            let picture = Picture::new_unchecked(
-                PictureType::CoverFront,
-                Some(mime),
-                None,
-                art_bytes,
-            );
+            let picture = Picture::unchecked(art_bytes)
+                .pic_type(PictureType::CoverFront)
+                .mime_type(mime)
+                .build();
             tag.push_picture(picture);
         }
 

@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use crate::extractor::traits::{AudioPlatformExtractor, AudioQuality, StreamInfo, TrackMetadata, AudioSource};
 use crate::js::decipher::JsDecipher;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+
 use std::time::Duration;
 
 /// Number of retries for network calls.
@@ -11,10 +11,6 @@ const MAX_RETRIES: u32 = 3;
 
 pub struct YouTubeMusicExtractor {
     client: reqwest::Client,
-    /// JsDecipher uses rquickjs which contains !Send Rc internals.
-    /// Wrapped in Arc<Mutex<>> so the extractor is Send+Sync while
-    /// decipher calls are made via spawn_blocking.
-    decipher: Arc<Mutex<JsDecipher>>,
 }
 
 impl YouTubeMusicExtractor {
@@ -24,7 +20,6 @@ impl YouTubeMusicExtractor {
                 .timeout(Duration::from_secs(10))
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
                 .build()?,
-            decipher: Arc::new(Mutex::new(JsDecipher::new()?)),
         })
     }
 
@@ -159,13 +154,12 @@ impl YouTubeMusicExtractor {
             .await?;
 
             // JsDecipher is !Send due to rquickjs Rc internals; call via spawn_blocking.
-            let decipher = Arc::clone(&self.decipher);
             let s_owned = s.clone();
             let js_code_owned = js_code.clone();
             let deciphered = tokio::task::spawn_blocking(move || {
+                let decipher = JsDecipher::new()
+                    .map_err(|e| anyhow!("Failed to initialize JsDecipher: {}", e))?;
                 decipher
-                    .lock()
-                    .map_err(|_| anyhow!("decipher mutex poisoned"))?
                     .decipher(&js_code_owned, &s_owned)
                     .map_err(|e| anyhow!("Decipher failed: {}", e))
             })
