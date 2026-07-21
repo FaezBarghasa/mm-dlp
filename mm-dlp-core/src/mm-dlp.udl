@@ -1,74 +1,74 @@
-namespace mmdlp {
+namespace mm_dlp_core {
 };
 
-// ==========================================
-// Core Data Structures
-// ==========================================
+dictionary EngineConfig {
+    u32 max_concurrent_downloads;
+    string user_agent;
+    u64 timeout_seconds;
+};
 
-dictionary MediaFormat {
+dictionary DownloadConfig {
+    string output_dir;
+    string filename_template;
+    boolean extract_audio;
+    string audio_format;
+    string quality;
+};
+
+dictionary MediaMetadata {
+    string id;
+    string title;
+    string artist;
+    string? album;
+    u64 duration_seconds;
+    string? thumbnail_url;
+    string webpage_url;
+};
+
+dictionary StreamCandidate {
     string format_id;
     string url;
     string ext;
-    u32? width;
-    u32? height;
-    string? vcodec;
-    string? acodec;
-    u64? filesize;
+    string? resolution;
+    u64? filesize_bytes;
+    double? tbr_kbps;
 };
 
-dictionary MediaInfo {
-    string id;
-    string title;
-    string? description;
-    string? uploader;
-    u32? duration;
-    sequence<MediaFormat> formats;
+dictionary DownloadResult {
+    string file_path;
+    u64 total_bytes;
+    u64 elapsed_millis;
 };
-
-dictionary FfmpegProgress {
-    u64? frame;
-    f32? fps;
-    f32? q;
-    u64? size_kb;
-    string? time;
-    string? bitrate;
-    f32? speed;
-};
-
-// ==========================================
-// Exceptions & Callbacks
-// ==========================================
 
 [Error]
 enum EngineError {
-    "FileSystemError",
-    "DecryptionError",
-    "DatabaseError",
-    "OsApiError",
     "Network",
-    "Io",
-    "Parsing",
+    "UnsupportedUrl",
+    "StreamNotFound",
+    "FfmpegError",
+    "FfmpegNotFound",
+    "TaggingError",
+    "IoError",
+    "Serialization",
+    "InvalidConfig",
+    "Cancelled",
+    "QuicFallbackExhausted",
 };
 
-// Maps Rust-native async behaviors into cross-platform compatible delegates
 callback interface DownloadProgressCallback {
-    void on_progress(FfmpegProgress progress);
-    void on_complete();
+    void on_status(string status);
+    void on_progress(double progress_percentage);
     void on_error(EngineError error);
+    void on_complete(DownloadResult result);
 };
-
-// ==========================================
-// Main Engine Interface
-// ==========================================
 
 interface MmDlpEngine {
-    constructor();
-
     [Throws=EngineError]
-    MediaInfo extract_metadata(string url);
+    constructor(EngineConfig config);
 
-    [Throws=EngineError]
-    void download_and_mux(string video_url, string audio_url, string output_path, DownloadProgressCallback callback);
+    [Async, Throws=EngineError]
+    DownloadResult execute_download(string task_id, string raw_url, DownloadConfig download_config, DownloadProgressCallback callback);
 
-    void start_backend_server(u16 port);
+    [Async]
+    boolean cancel_download(string task_id);
 };

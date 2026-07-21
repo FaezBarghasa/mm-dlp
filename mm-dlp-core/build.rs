@@ -1,3 +1,3 @@
 fn main() {
-    uniffi::setup_scaffolding("./src/mm_dlp_core.udl").ok();
+    uniffi::setup_scaffolding("./src/mm-dlp.udl").ok();
 }

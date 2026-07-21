@@ -3941,6 +3941,7 @@ dependencies = [
  "clap",
  "mm-dlp-core",
  "tokio",
+ "uniffi_bindgen",
 ]
 
 [[package]]
