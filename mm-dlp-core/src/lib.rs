@@ -7,19 +7,26 @@ uniffi::setup_scaffolding!();
 
 // Export all modules
 pub mod client;
+pub mod config;
 pub mod data;
 pub mod domain;
 pub mod download;
 pub mod downloader;
+pub mod engine;
 pub mod error;
 pub mod extractor;
 pub mod ffi;
 pub mod js;
 pub mod media;
 pub mod network;
+pub mod playlist;
 pub mod plugin;
 pub mod postprocessor;
+pub mod processor;
+pub mod resolver;
 pub mod server;
+pub mod utils;
+
 
 // Re-export all necessary types for UniFFI
 pub use crate::error::EngineError;

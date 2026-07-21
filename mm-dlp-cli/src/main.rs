@@ -1,28 +1,40 @@
 use clap::Parser;
+use mm_dlp_core::config::EngineConfig;
+use mm_dlp_core::MmDlpEngine;
 
-/// Command line arguments for the `mm-dlp-cli` tool.
-///
-/// This struct defines the CLI interface using `clap`. It automatically 
-/// generates terminal help messages and parses incoming arguments.
+/// Command line arguments for mm-dlp-cli tool.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "High performance media downloader CLI", long_about = None)]
 struct Args {
-    /// The target URL to download media from.
-    /// 
-    /// This expects a valid URL string pointing to a supported media platform.
+    /// The target URL to extract metadata or download media from.
     #[arg(short, long)]
     url: String,
+
+    /// Target audio output format (e.g. mp3, flac, opus, wav).
+    #[arg(short, long, default_value = "mp3")]
+    format: String,
+
+    /// Optional target output directory.
+    #[arg(short, long, default_value = ".")]
+    output: String,
 }
 
-/// The main entry point of the CLI application.
-///
-/// Uses the `tokio` runtime to enable asynchronous operations, which is
-/// essential for making non-blocking network requests during concurrent downloads.
 #[tokio::main]
 async fn main() {
-    // Parse the command line arguments provided by the user into the `Args` struct.
     let args = Args::parse();
+    println!("Initializing mm-dlp engine for target: {}", args.url);
+    println!("Selected format: {}, output directory: {}", args.format, args.output);
 
-    // Log the initiation of the download process to standard output.
-    println!("Downloading from: {}", args.url);
+    let config = EngineConfig::default();
+    let engine = MmDlpEngine::new();
+    println!("Engine initialized successfully with max concurrent downloads: {}", config.max_concurrent_downloads);
+
+    match engine.extract_metadata(args.url.clone()) {
+        Ok(info) => {
+            println!("Extracted media info for title: {}", info.title);
+        }
+        Err(e) => {
+            println!("Extraction note / status: {}", e);
+        }
+    }
 }

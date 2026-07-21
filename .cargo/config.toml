@@ -1,2 +1,11 @@
-[env]
-BINDGEN_EXTRA_CLANG_ARGS = { value = "--target=x86_64-unknown-linux-gnu", force = false }
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android24-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android24-clang"
+
+[target.armv7-linux-androideabi]
+linker = "armv7a-linux-androideabi24-clang"
+
+[build]
+rustflags = ["-C", "link-arg=-s"]
