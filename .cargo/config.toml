@@ -6,6 +6,3 @@ linker = "x86_64-linux-android24-clang"
 
 [target.armv7-linux-androideabi]
 linker = "armv7a-linux-androideabi24-clang"
-
-[build]
-rustflags = ["-C", "link-arg=-s"]

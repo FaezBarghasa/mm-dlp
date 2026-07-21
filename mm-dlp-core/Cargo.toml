@@ -31,18 +31,6 @@ once_cell = "1.19"
 async-trait = "0.1"
 regex = "1.10"
 libc = "0.2"
-memmap2 = "0.9"
-boring = "4.11.0"
-quiche = { version = "0.29.1", features = ["boring"] }
-rquickjs = { version = "0.12.0" }
-wasmer = "7.1.0"
-ffmpeg-next = { version = "8.1.0", features = ["build"] }
-secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
-security-framework = "3.7.0"
-windows-sys = { version = "0.61.2", features = [
-    "Win32_Security_Cryptography",
-    "Win32_System_Memory",
-] }
 bytes = "1.6"
 ed25519-dalek = "3.0.0"
 hex = "0.4"
