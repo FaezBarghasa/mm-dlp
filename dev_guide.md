@@ -40,9 +40,9 @@ To maintain a production-ready and highly reliable codebase, contributors must s
 ## Compiling & FFI Binding Generation
 
 When building the workspace or writing new code, keep in mind:
-- **Build Target Alignment**: The toolchain uses Clang for `bindgen` (under `boring-sys` and `ffmpeg-sys-next`). A layout mismatch issue with 64-bit target compilation is automatically addressed via [.cargo/config.toml](file:///home/jrad/RustroverProjects/mm-dlp/.cargo/config.toml) setting the `BINDGEN_EXTRA_CLANG_ARGS` variable.
+- **Build Target Alignment**: The toolchain uses Clang for `bindgen`. A layout mismatch issue with 64-bit target compilation is automatically addressed via [.cargo/config.toml](file:///home/jrad/RustroverProjects/mscraper/mm-dlp/.cargo/config.toml) setting the `BINDGEN_EXTRA_CLANG_ARGS` variable. Note that system-heavy dependencies (`ffmpeg-sys-next`, `boring-sys`) have been removed from the core crate to avoid cross-compilation errors (`libavutil.pc` missing).
 - **Offline Compliance**: Local library versions are enforced. Do not add external network dependencies or change Cargo resolver behaviors.
-- **FFI Contract Verification**: If you modify `src/mm-dlp.udl`, ensure that you run `cargo test --test uniffi_test` to verify that Kotlin and Swift interfaces continue to generate successfully.
+- **FFI Contract Verification**: If you modify `src/mm-dlp.udl`, ensure that you run `cargo test --test uniffi_test` to verify that Kotlin and Swift interfaces continue to generate successfully. Additionally, the `scripts/generate_bindings.sh` script automates the `uniffi-bindgen` workflow.
 
 ---
 

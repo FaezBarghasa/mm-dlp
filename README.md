@@ -77,7 +77,7 @@ fn main() {
 - **`EngineError`**: Unified error boundary mapping Rust errors into native language exceptions.
 
 ### Compiling and Generating Bindings
-The crate handles build environment target configurations automatically via [.cargo/config.toml](file:///home/jrad/RustroverProjects/mm-dlp/.cargo/config.toml) to prevent Clang compilation size assertion layout crashes.
+The crate handles build environment target configurations automatically via [.cargo/config.toml](file:///home/jrad/RustroverProjects/mscraper/mm-dlp/.cargo/config.toml) to prevent Clang compilation size assertion layout crashes. Note that we have simplified the dependency tree by removing system-heavy dependencies (`ffmpeg-sys-next`, `boring-sys`) which previously caused cross-compilation errors (`libavutil.pc` missing). This ensures smooth FFI generation and compilation across all targets.
 
 To programmatically build and verify Swift and Kotlin JNI exports, run:
 ```bash

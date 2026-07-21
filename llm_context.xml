@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<context>
+    <project>
+        <name>mm-dlp</name>
+        <description>High-performance media extractor and downloading engine built in Rust, consumed by Android via UniFFI.</description>
+    </project>
+    
+    <architecture>
+        <core>
+            The core engine (`mm-dlp-core`) uses a trait-based routing system (`PlatformExtractor`) wrapped in a `PlatformRegistry` for easy extensibility. 
+            All extraction and scraping logic is async and relies on `tokio` and `reqwest`.
+        </core>
+        <ffi_bridge>
+            The engine is bridged to Kotlin via UniFFI.
+            - `uniffi.toml` specifies the package mapping.
+            - `mm-dlp.udl` declares the interface for `MmDlpEngine`, progress callbacks, and shared structs.
+            - We removed heavy native/C dependencies (`ffmpeg-sys-next`, `boring-sys`) from `mm-dlp-core` because their `build.rs` scripts caused cross-compilation errors (`libavutil.pc` missing). Native bindings must be handled carefully to maintain smooth FFI generation.
+        </ffi_bridge>
+        <automation>
+            A shell script (`scripts/generate_bindings.sh`) automates building the `cargo ndk` targets and generating Kotlin files with `uniffi-bindgen`.
+        </automation>
+    </architecture>
+    
+    <rules>
+        <rule>NO STUBS: Write complete, functional Rust code. No `todo!()` or placeholders.</rule>
+        <rule>SECURITY: Validate paths and avoid directory traversal during downloads.</rule>
+        <rule>MODERN RUST: Use `std::sync::LazyLock` for static compilation, no `once_cell`.</rule>
+        <rule>DEPENDENCIES: Avoid crates that rely heavily on `pkg-config` or host C-libraries unless absolutely necessary, to keep cross-compilation robust.</rule>
+    </rules>
+</context>
