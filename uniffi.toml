@@ -1,0 +1,6 @@
+[bindings.kotlin]
+package_name = "com.mscraper.mmdlp"
+cdylib_name = "mm_dlp_core"
+
+[bindings.swift]
+module_name = "MmDlpCore"

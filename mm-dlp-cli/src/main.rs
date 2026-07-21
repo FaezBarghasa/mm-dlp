@@ -14,27 +14,20 @@ struct Args {
     #[arg(short, long, default_value = "mp3")]
     format: String,
 
-    /// Optional target output directory.
-    #[arg(short, long, default_value = ".")]
-    output: String,
+    /// Optional media source identifier (e.g. youtube, spotify, soundcloud).
+    #[arg(short, long, default_value = "auto")]
+    source: String,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let args = Args::parse();
-    println!("Initializing mm-dlp engine for target: {}", args.url);
-    println!("Selected format: {}, output directory: {}", args.format, args.output);
+    println!("Initializing mm-dlp engine for URL: {}", args.url);
+    println!("Format: {}, Source: {}", args.format, args.source);
 
     let config = EngineConfig::default();
-    let engine = MmDlpEngine::new();
-    println!("Engine initialized successfully with max concurrent downloads: {}", config.max_concurrent_downloads);
-
-    match engine.extract_metadata(args.url.clone()) {
-        Ok(info) => {
-            println!("Extracted media info for title: {}", info.title);
-        }
-        Err(e) => {
-            println!("Extraction note / status: {}", e);
-        }
-    }
+    let _engine = MmDlpEngine::new();
+    println!(
+        "Engine initialized successfully with max concurrent downloads: {}",
+        config.max_concurrent_downloads
+    );
 }

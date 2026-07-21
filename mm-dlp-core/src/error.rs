@@ -1,69 +1,56 @@
 use thiserror::Error;
 
-/// The central error type used throughout the `mm-dlp-core` engine.
+/// The central unified error type for `mm-dlp-core`.
 #[derive(Debug, Clone, Error, uniffi::Error)]
 pub enum EngineError {
-    /// An error related to the file system.
-    #[error("File system error: {0}")]
-    FileSystemError(String),
-
-    /// An error related to decryption.
-    #[error("Decryption error: {0}")]
-    DecryptionError(String),
-
-    /// An error related to database operations.
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-
-    /// An error related to OS APIs.
-    #[error("OS API error: {0}")]
-    OsApiError(String),
-
-    /// An error related to network operations (e.g., fetching a URL).
-    #[error("Network operation failed: {0}")]
+    #[error("Network error: {0}")]
     Network(String),
 
-    /// An error related to input/output operations (e.g., writing a file).
-    #[error("I/O operation failed: {0}")]
-    Io(String),
+    #[error("Unsupported URL: {0}")]
+    UnsupportedUrl(String),
 
-    /// An error related to parsing or serialization (e.g., parsing JSON).
-    #[error("Data parsing or serialization failed: {0}")]
-    Parsing(String),
+    #[error("Stream not found: {0}")]
+    StreamNotFound(String),
 
-    /// The `ffmpeg` binary was not found in the system PATH.
-    #[error("ffmpeg not found in PATH; please install ffmpeg")]
+    #[error("FFmpeg error: {0}")]
+    FfmpegError(String),
+
+    #[error("FFmpeg not found in PATH")]
     FfmpegNotFound,
 
-    /// A media processing operation (tagging, conversion) failed.
-    #[error("Media processing error: {0}")]
-    MediaError(String),
+    #[error("Tagging error: {0}")]
+    TaggingError(String),
+
+    #[error("I/O error: {0}")]
+    IoError(String),
+
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+
+    #[error("Operation cancelled")]
+    Cancelled,
+
+    #[error("QUIC fallback exhausted: {0}")]
+    QuicFallbackExhausted(String),
 }
 
-/// Allows automatic conversion from `reqwest::Error` to `EngineError::Network`.
-impl From<reqwest::Error> for EngineError {
-    fn from(error: reqwest::Error) -> Self {
-        EngineError::Network(error.to_string())
-    }
-}
-
-/// Allows automatic conversion from `std::io::Error` to `EngineError::Io`.
 impl From<std::io::Error> for EngineError {
-    fn from(error: std::io::Error) -> Self {
-        EngineError::Io(error.to_string())
+    fn from(err: std::io::Error) -> Self {
+        EngineError::IoError(err.to_string())
     }
 }
 
-/// Allows automatic conversion from `serde_json::Error` to `EngineError::Parsing`.
+impl From<reqwest::Error> for EngineError {
+    fn from(err: reqwest::Error) -> Self {
+        EngineError::Network(err.to_string())
+    }
+}
+
 impl From<serde_json::Error> for EngineError {
-    fn from(error: serde_json::Error) -> Self {
-        EngineError::Parsing(error.to_string())
-    }
-}
-
-/// Allows automatic conversion from `anyhow::Error` to `EngineError::OsApiError`.
-impl From<anyhow::Error> for EngineError {
-    fn from(error: anyhow::Error) -> Self {
-        EngineError::OsApiError(error.to_string())
+    fn from(err: serde_json::Error) -> Self {
+        EngineError::Serialization(err.to_string())
     }
 }
