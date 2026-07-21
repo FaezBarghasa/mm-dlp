@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/logo.svg" alt="mscraper logo" width="300" />
+</div>
+
 # mm-dlp (MultiMedia Downloader)
 
 **mm-dlp** is a fast, safe, and highly extensible media metadata extractor and downloading tool built in Rust. Designed with modularity and concurrency in mind, it reliably parses URLs from the web's most popular media platforms to extract clean, standardized metadata required for downstream processing and downloading.

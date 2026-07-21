@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/logo.svg" alt="mscraper logo" width="300" />
+</div>
+
 # mm-dlp Developer Guide
 
 Welcome to the developer documentation for **mm-dlp**. This guide is intended for contributors who want to understand the internal architecture, add new platform extractors, or improve the core engine.

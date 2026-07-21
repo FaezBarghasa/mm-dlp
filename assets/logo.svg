@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Gradient for Synthwave Sun -->
+    <linearGradient id="synthGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FF007F" /> <!-- Neon Pink -->
+      <stop offset="50%" stop-color="#7928CA" /> <!-- Deep Purple -->
+      <stop offset="100%" stop-color="#00D2FF" /> <!-- Cyan -->
+    </linearGradient>
+
+    <!-- Glowing Effect -->
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="intenseGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur1"/>
+      <feGaussianBlur stdDeviation="16" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Sun Striping Mask -->
+    <mask id="retroSunMask">
+      <circle cx="256" cy="230" r="140" fill="white" />
+      <rect x="100" y="250" width="312" height="6" fill="black" />
+      <rect x="100" y="265" width="312" height="8" fill="black" />
+      <rect x="100" y="282" width="312" height="10" fill="black" />
+      <rect x="100" y="302" width="312" height="14" fill="black" />
+      <rect x="100" y="326" width="312" height="18" fill="black" />
+      <rect x="100" y="356" width="312" height="24" fill="black" />
+    </mask>
+  </defs>
+
+  <!-- Deep Dark Space/Synthwave Background -->
+  <rect width="512" height="512" fill="#050014" rx="100" />
+  
+  <!-- Cyberpunk Wireframe Grid -->
+  <g stroke="#00D2FF" stroke-width="2" opacity="0.4" filter="url(#neonGlow)">
+    <!-- Horizontals -->
+    <path d="M 0 350 L 512 350 M 0 375 L 512 375 M 0 405 L 512 405 M 0 445 L 512 445 M 0 495 L 512 495" />
+    <!-- Verticals/Perspective -->
+    <path d="M 256 350 L 256 512" />
+    <path d="M 256 350 L 156 512" />
+    <path d="M 256 350 L 56 512" />
+    <path d="M 256 350 L -44 512" />
+    <path d="M 256 350 L -144 512" />
+    <path d="M 256 350 L 356 512" />
+    <path d="M 256 350 L 456 512" />
+    <path d="M 256 350 L 556 512" />
+    <path d="M 256 350 L 656 512" />
+  </g>
+
+  <!-- Retro Sun -->
+  <circle cx="256" cy="230" r="140" fill="url(#synthGrad)" mask="url(#retroSunMask)" filter="url(#intenseGlow)" />
+
+  <!-- "M" Geometric Monogram for 'mscraper' -->
+  <path d="M 166 310 L 166 160 L 256 240 L 346 160 L 346 310" 
+        fill="none" 
+        stroke="#FFFFFF" 
+        stroke-width="32" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        filter="url(#intenseGlow)" />
+        
+  <!-- Subtle inner cyan glow for the M to give it a neon tube look -->
+  <path d="M 166 310 L 166 160 L 256 240 L 346 160 L 346 310" 
+        fill="none" 
+        stroke="#00FFFF" 
+        stroke-width="8" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" />
+</svg>
