@@ -98,6 +98,20 @@ enum Commands {
         #[arg(short, long, default_value = "youtube")]
         platform: String,
     },
+    /// Multi-threaded BitTorrent download engine for magnet links and .torrent files
+    Torrent {
+        /// Magnet URI, HTTP(S) torrent URL, or local .torrent file path
+        source: String,
+        /// Destination directory
+        #[arg(short, long, default_value = ".")]
+        output_dir: String,
+        /// Peer connection concurrency limit
+        #[arg(short, long, default_value_t = 8)]
+        concurrency: usize,
+        /// Inspect torrent metadata without starting download
+        #[arg(long)]
+        info_only: bool,
+    },
 }
 
 #[tokio::main]
@@ -121,9 +135,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Search { query, platform }) => {
             handle_search(&engine, &platform, &query).await?;
         }
+        Some(Commands::Torrent {
+            source,
+            output_dir,
+            concurrency,
+            info_only,
+        }) => {
+            handle_torrent(&engine, source, output_dir, concurrency, info_only).await?;
+        }
         None => {
             if let Some(url) = cli.url {
-                handle_download(&engine, url, cli.output_dir, cli.format, cli.quality).await?;
+                if url.starts_with("magnet:") || url.ends_with(".torrent") {
+                    handle_torrent(&engine, url, cli.output_dir, 8, false).await?;
+                } else {
+                    handle_download(&engine, url, cli.output_dir, cli.format, cli.quality).await?;
+                }
             } else {
                 eprintln!("Error: URL or subcommand required. Run `mm-dlp --help` for usage.");
                 std::process::exit(1);
@@ -135,6 +161,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn handle_info(engine: &MmDlpEngine, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if url.starts_with("magnet:") || url.ends_with(".torrent") {
+        return handle_torrent(engine, url.to_string(), ".".to_string(), 8, true).await;
+    }
+
     println!("[mm-dlp] Inspecting media stream: {}", url);
 
     // Try full MediaInfo extractor first
@@ -259,6 +289,51 @@ async fn handle_search(
             track.webpage_url
         );
     }
+
+    Ok(())
+}
+
+async fn handle_torrent(
+    engine: &MmDlpEngine,
+    source: String,
+    output_dir: String,
+    concurrency: usize,
+    info_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[mm-dlp] BitTorrent Engine: {}", source);
+
+    if info_only {
+        let meta = engine.get_torrent_metadata(source).await?;
+        println!("Name:        {}", meta.name);
+        println!("Info Hash:   {}", meta.info_hash);
+        let mb = meta.total_bytes as f64 / 1_048_576.0;
+        println!("Total Size:  {} bytes ({:.2} MiB)", meta.total_bytes, mb);
+        println!("Files ({} total):", meta.files.len());
+        for f in &meta.files {
+            println!("  [{:>3}] {:<50} {:>10} bytes", f.index, f.path, f.length);
+        }
+        return Ok(());
+    }
+
+    let callback = Box::new(CliProgressCallback::new());
+    let task_id = format!(
+        "torrent_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
+
+    let result = engine
+        .download_torrent(task_id, source, output_dir, concurrency as u32, callback)
+        .await?;
+
+    println!("\n[mm-dlp] BitTorrent download finished successfully!");
+    println!("Saved to: {}", result.file_path);
+    println!(
+        "Total:    {} bytes in {:.2}s",
+        result.total_bytes,
+        result.elapsed_millis as f64 / 1000.0
+    );
 
     Ok(())
 }

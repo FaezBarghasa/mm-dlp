@@ -40,6 +40,19 @@ dictionary DownloadResult {
     u64 elapsed_millis;
 };
 
+dictionary TorrentFileEntry {
+    u64 index;
+    string path;
+    u64 length;
+};
+
+dictionary TorrentMetadata {
+    string name;
+    string info_hash;
+    u64 total_bytes;
+    sequence<TorrentFileEntry> files;
+};
+
 [Error]
 enum EngineError {
     "Network",
@@ -53,6 +66,7 @@ enum EngineError {
     "InvalidConfig",
     "Cancelled",
     "QuicFallbackExhausted",
+    "Torrent",
 };
 
 callback interface DownloadProgressCallback {
@@ -70,7 +84,13 @@ interface MmDlpEngine {
     MediaMetadata extract_metadata(string raw_url);
 
     [Async, Throws=EngineError]
+    TorrentMetadata get_torrent_metadata(string source);
+
+    [Async, Throws=EngineError]
     DownloadResult execute_download(string task_id, string raw_url, DownloadConfig download_config, DownloadProgressCallback callback);
+
+    [Async, Throws=EngineError]
+    DownloadResult download_torrent(string task_id, string source, string output_dir, u32 concurrency, DownloadProgressCallback callback);
 
     [Async]
     boolean cancel_download(string task_id);

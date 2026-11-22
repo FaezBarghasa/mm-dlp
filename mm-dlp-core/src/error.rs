@@ -35,6 +35,9 @@ pub enum EngineError {
 
     #[error("QUIC fallback exhausted: {0}")]
     QuicFallbackExhausted(String),
+
+    #[error("Torrent error: {0}")]
+    Torrent(String),
 }
 
 impl From<std::io::Error> for EngineError {

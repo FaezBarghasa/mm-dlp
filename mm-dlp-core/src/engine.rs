@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{DownloadConfig, DownloadResult, EngineConfig, MediaMetadata};
+pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
 use crate::downloader::{build_http_client, fetch_with_fallback, stream_to_file};
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;
@@ -54,6 +55,52 @@ impl MmDlpEngine {
         extractor.extract_metadata(&self.client, &clean_url).await
     }
 
+    pub async fn get_torrent_metadata(
+        &self,
+        source: String,
+    ) -> Result<TorrentMetadata, EngineError> {
+        let session_dir = std::env::temp_dir().join("mm-dlp-torrents");
+        let downloader = TorrentDownloader::new(session_dir)?;
+        downloader.get_metadata(&source).await
+    }
+
+    pub async fn download_torrent(
+        &self,
+        task_id: String,
+        source: String,
+        output_dir: String,
+        concurrency: u32,
+        callback: Box<dyn DownloadProgressCallback>,
+    ) -> Result<DownloadResult, EngineError> {
+        let cancel_token = CancellationToken::new();
+        {
+            let mut tasks = self.active_tasks.write().await;
+            tasks.insert(task_id.clone(), cancel_token.clone());
+        }
+
+        let out_path = validate_output_path(&output_dir)?;
+        let session_dir = out_path.join(".mm-dlp-session");
+        let downloader = TorrentDownloader::new(session_dir)?;
+
+        let result = downloader
+            .download(
+                task_id.clone(),
+                &source,
+                &out_path,
+                concurrency as usize,
+                callback,
+                cancel_token,
+            )
+            .await;
+
+        {
+            let mut tasks = self.active_tasks.write().await;
+            tasks.remove(&task_id);
+        }
+
+        result
+    }
+
     pub async fn extract_info(
         &self,
         raw_url: &str,
@@ -98,6 +145,21 @@ impl MmDlpEngine {
             callback.on_status("Validating parameters".to_string());
             let clean_url = sanitize_url(&raw_url)?;
             let output_dir = validate_output_path(&download_config.output_dir)?;
+
+            if clean_url.starts_with("magnet:") || clean_url.ends_with(".torrent") {
+                let session_dir = output_dir.join(".mm-dlp-session");
+                let downloader = TorrentDownloader::new(session_dir)?;
+                return downloader
+                    .download(
+                        task_id.clone(),
+                        &clean_url,
+                        &output_dir,
+                        8,
+                        callback,
+                        cancel_token.clone(),
+                    )
+                    .await;
+            }
 
             callback.on_status("Extracting metadata".to_string());
             let extractor = self.registry.route_url(&clean_url).ok_or_else(|| {

@@ -18,7 +18,12 @@ static VIMEO_REGEX: LazyLock<Regex> =
 
 /// Strips query params, fragments, and trailing slashes using the `url` crate.
 pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
-    let mut parsed = Url::parse(raw_url.trim())
+    let trimmed = raw_url.trim();
+    if trimmed.starts_with("magnet:") {
+        return Ok(trimmed.to_string());
+    }
+
+    let mut parsed = Url::parse(trimmed)
         .map_err(|e| EngineError::UnsupportedUrl(format!("Invalid URL syntax: {}", e)))?;
     parsed.set_query(None);
     parsed.set_fragment(None);
@@ -30,8 +35,13 @@ pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
     Ok(clean_str)
 }
 
-/// Detects the platform (e.g. "spotify", "soundcloud", "youtube", "vimeo") from URL using `std::sync::LazyLock` regexes.
+/// Detects the platform (e.g. "spotify", "soundcloud", "youtube", "vimeo", "torrent") from URL using `std::sync::LazyLock` regexes.
 pub fn detect_platform(raw_url: &str) -> Option<&'static str> {
+    let trimmed = raw_url.trim();
+    if trimmed.starts_with("magnet:") || trimmed.ends_with(".torrent") {
+        return Some("torrent");
+    }
+
     if SPOTIFY_REGEX.is_match(raw_url) {
         Some("spotify")
     } else if SOUNDCLOUD_REGEX.is_match(raw_url) {

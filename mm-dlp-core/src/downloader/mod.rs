@@ -11,6 +11,7 @@ pub mod flusher;
 pub mod manifest;
 pub mod mmap;
 pub mod parallel;
+pub mod torrent;
 
 pub fn build_http_client() -> Result<Client, EngineError> {
     Client::builder()
