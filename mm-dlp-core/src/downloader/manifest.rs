@@ -1,4 +1,4 @@
-use crate::client::EngineError;
+use crate::error::EngineError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadSegment {

@@ -1,4 +1,4 @@
-use lofty::file::AudioFile;
+use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, Tag, TagType};
 use reqwest::Client;
@@ -109,7 +109,7 @@ pub fn tag_file_in_place(
         .read()
         .map_err(|e| EngineError::TaggingError(e.to_string()))?;
 
-    let tag_type = tagged_file.primary_tag_type().unwrap_or(TagType::Id3v2);
+    let tag_type = tagged_file.primary_tag_type();
     let tag = match tagged_file.tag_mut(tag_type) {
         Some(t) => t,
         None => {
@@ -131,12 +131,10 @@ pub fn tag_file_in_place(
             lofty::picture::MimeType::Png
         };
 
-        let picture = lofty::picture::Picture::new_unchecked(
-            lofty::picture::PictureType::CoverFront,
-            Some(mime),
-            None,
-            art_bytes,
-        );
+        let mut builder = lofty::picture::Picture::unchecked(art_bytes)
+            .pic_type(lofty::picture::PictureType::CoverFront)
+            .mime_type(mime);
+        let picture = builder.build();
         tag.push_picture(picture);
     }
 

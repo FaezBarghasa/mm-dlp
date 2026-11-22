@@ -1,4 +1,4 @@
-use crate::client::EngineError;
+use crate::error::EngineError;
 use memmap2::MmapMut;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -16,13 +16,13 @@ impl MmapWriter {
             .create(true)
             .truncate(true)
             .open(path)
-            .map_err(|e| EngineError::FileSystemError(format!("Failed to open file: {}", e)))?;
+            .map_err(|e| EngineError::IoError(format!("Failed to open file: {}", e)))?;
 
         // Pre-allocate blocks on disk securely
         Self::preallocate(&file, size)?;
 
         let mmap = unsafe { MmapMut::map_mut(&file) }
-            .map_err(|e| EngineError::FileSystemError(format!("Failed to map memory: {}", e)))?;
+            .map_err(|e| EngineError::IoError(format!("Failed to map memory: {}", e)))?;
 
         Ok(Self { mmap, _file: file })
     }
@@ -35,7 +35,7 @@ impl MmapWriter {
         // Tell the OS to allocate contiguous file system blocks directly
         let ret = unsafe { libc::posix_fallocate(fd, 0, size as libc::off_t) };
         if ret != 0 {
-            return Err(EngineError::FileSystemError(format!("posix_fallocate failed with code: {}", ret)));
+            return Err(EngineError::IoError(format!("posix_fallocate failed with code: {}", ret)));
         }
         Ok(())
     }
@@ -60,7 +60,7 @@ impl MmapWriter {
         };
 
         if success == 0 {
-            return Err(EngineError::FileSystemError("SetFileInformationByHandle pre-allocation failed".into()));
+            return Err(EngineError::IoError("SetFileInformationByHandle pre-allocation failed".into()));
         }
         Ok(())
     }
@@ -68,7 +68,7 @@ impl MmapWriter {
     pub fn write_at_offset(&mut self, offset: usize, data: &[u8]) -> Result<(), EngineError> {
         let end = offset + data.len();
         if end > self.mmap.len() {
-            return Err(EngineError::FileSystemError("Memory-mapped write exceeds buffer boundaries".into()));
+            return Err(EngineError::IoError("Memory-mapped write exceeds buffer boundaries".into()));
         }
         
         self.mmap[offset..end].copy_from_slice(data);

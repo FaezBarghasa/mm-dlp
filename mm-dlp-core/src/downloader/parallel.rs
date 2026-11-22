@@ -1,4 +1,4 @@
-use crate::client::EngineError;
+use crate::error::EngineError;
 use crate::downloader::manifest::DownloadSegment;
 use bytes::Bytes;
 use reqwest::Client;
@@ -54,9 +54,9 @@ pub async fn download_segments(
             let result = match response {
                 Ok(resp) => match resp.bytes().await {
                     Ok(bytes) => Ok(SequencedChunk { index: segment.index, data: bytes }),
-                    Err(e) => Err(EngineError::OsApiError(format!("Failed to read body: {}", e))),
+                    Err(e) => Err(EngineError::IoError(format!("Failed to read body: {}", e))),
                 },
-                Err(e) => Err(EngineError::OsApiError(format!("Failed to download segment: {}", e))),
+                Err(e) => Err(EngineError::IoError(format!("Failed to download segment: {}", e))),
             };
 
             let _ = tx_clone.send(result).await;

@@ -40,13 +40,15 @@ impl SoundCloudExtractor {
         }
 
         for js_url in js_urls.iter().rev() {
-            if let Ok(js_content) = client.get(js_url).send().await.and_then(|r| r.text()) {
-                if let Some(cap) = CLIENT_ID_REGEX.captures(&js_content) {
-                    if let Some(cid) = cap.get(1) {
-                        let client_id = cid.as_str().to_string();
-                        let mut cache = self.client_id_cache.write().await;
-                        *cache = Some(client_id.clone());
-                        return Ok(client_id);
+            if let Ok(resp) = client.get(js_url).send().await {
+                if let Ok(js_content) = resp.text().await {
+                    if let Some(cap) = CLIENT_ID_REGEX.captures(&js_content) {
+                        if let Some(cid) = cap.get(1) {
+                            let client_id = cid.as_str().to_string();
+                            let mut cache = self.client_id_cache.write().await;
+                            *cache = Some(client_id.clone());
+                            return Ok(client_id);
+                        }
                     }
                 }
             }

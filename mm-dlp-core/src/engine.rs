@@ -111,7 +111,7 @@ impl MmDlpEngine {
             Ok(result)
         };
 
-        let result = run_download.await;
+        let result: Result<DownloadResult, EngineError> = run_download.await;
         {
             let mut tasks = self.active_tasks.write().await;
             tasks.remove(&task_id);

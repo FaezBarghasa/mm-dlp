@@ -68,6 +68,7 @@ lofty = "0.24"
 which = "8.0.4"
 quick-xml = { version = "0.41.0", features = ["serde", "serialize"] }
 futures = "0.3"
+strsim = "0.11"
 
 [dev-dependencies]
 uniffi_bindgen = "0.32.0"
