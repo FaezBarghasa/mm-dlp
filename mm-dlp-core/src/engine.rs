@@ -72,6 +72,7 @@ impl MmDlpEngine {
         concurrency: u32,
         callback: Box<dyn DownloadProgressCallback>,
     ) -> Result<DownloadResult, EngineError> {
+        let callback: Arc<dyn DownloadProgressCallback> = Arc::from(callback);
         let cancel_token = CancellationToken::new();
         {
             let mut tasks = self.active_tasks.write().await;
@@ -88,7 +89,7 @@ impl MmDlpEngine {
                 &source,
                 &out_path,
                 concurrency as usize,
-                callback,
+                callback.clone(),
                 cancel_token,
             )
             .await;
@@ -96,6 +97,10 @@ impl MmDlpEngine {
         {
             let mut tasks = self.active_tasks.write().await;
             tasks.remove(&task_id);
+        }
+
+        if let Err(ref err) = result {
+            callback.on_error(err.clone());
         }
 
         result
@@ -141,8 +146,11 @@ impl MmDlpEngine {
             tasks.insert(task_id.clone(), cancel_token.clone());
         }
 
+        let callback: Arc<dyn DownloadProgressCallback> = Arc::from(callback);
+        let callback_run = callback.clone();
+
         let run_download = async {
-            callback.on_status("Validating parameters".to_string());
+            callback_run.on_status("Validating parameters".to_string());
             let clean_url = sanitize_url(&raw_url)?;
             let output_dir = validate_output_path(&download_config.output_dir)?;
 
@@ -155,20 +163,20 @@ impl MmDlpEngine {
                         &clean_url,
                         &output_dir,
                         8,
-                        callback,
+                        callback_run,
                         cancel_token.clone(),
                     )
                     .await;
             }
 
-            callback.on_status("Extracting metadata".to_string());
+            callback_run.on_status("Extracting metadata".to_string());
             let extractor = self.registry.route_url(&clean_url).ok_or_else(|| {
                 EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
             })?;
 
             let metadata = extractor.extract_metadata(&self.client, &clean_url).await?;
 
-            callback.on_status("Resolving audio stream".to_string());
+            callback_run.on_status("Resolving audio stream".to_string());
             let candidate = if extractor
                 .get_stream_url(&self.client, &metadata.id)
                 .await
@@ -181,7 +189,7 @@ impl MmDlpEngine {
                     .await?
             };
 
-            callback.on_status("Fetching audio stream".to_string());
+            callback_run.on_status("Fetching audio stream".to_string());
             let response = fetch_with_fallback(&self.client, &candidate.url).await?;
 
             let clean_title = sanitize_filename(&metadata.title);
@@ -189,15 +197,15 @@ impl MmDlpEngine {
             let raw_target_path = output_dir.join(target_filename);
             let final_target_path = resolve_duplicate_path(&raw_target_path);
 
-            callback.on_status("Downloading stream".to_string());
+            callback_run.on_status("Downloading stream".to_string());
             let downloaded_bytes =
                 stream_to_file(response, &final_target_path, cancel_token.clone()).await?;
-            callback.on_progress(100.0);
+            callback_run.on_progress(100.0);
 
             if let Some(art_url) = &metadata.thumbnail_url {
-                callback.on_status("Fetching cover art".to_string());
+                callback_run.on_status("Fetching cover art".to_string());
                 let cover_art = download_cover_art(&self.client, art_url).await;
-                callback.on_status("Embedding metadata tags".to_string());
+                callback_run.on_status("Embedding metadata tags".to_string());
                 let _ = tag_file_in_place(&final_target_path, &metadata, cover_art);
             }
 
@@ -208,7 +216,7 @@ impl MmDlpEngine {
                 elapsed_millis,
             };
 
-            callback.on_complete(result.clone());
+            callback_run.on_complete(result.clone());
             Ok(result)
         };
 

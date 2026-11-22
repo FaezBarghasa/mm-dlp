@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrentHandle, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Magnet, ManagedTorrent, Session,
+    SessionOptions,
 };
-use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -71,12 +71,12 @@ impl TorrentDownloader {
     /// Retrieve metadata for a magnet URI or .torrent file without initiating full file download.
     pub async fn get_metadata(&self, source: &str) -> Result<TorrentMetadata, EngineError> {
         // Fast-path: if offline and magnet URI, parse basic metadata directly
-        if source.starts_with("magnet:") {
-            if let Ok(meta) = parse_magnet_uri(source) {
-                if !meta.name.is_empty() && meta.name != "unnamed_torrent" {
-                    debug!("Parsed offline magnet metadata: {:?}", meta);
-                }
-            }
+        if source.starts_with("magnet:")
+            && let Ok(meta) = parse_magnet_uri(source)
+            && !meta.name.is_empty()
+            && meta.name != "unnamed_torrent"
+        {
+            debug!("Parsed offline magnet metadata: {:?}", meta);
         }
 
         let session = Session::new_with_opts(
@@ -88,7 +88,9 @@ impl TorrentDownloader {
             },
         )
         .await
-        .map_err(|e| EngineError::Torrent(format!("Failed to initialize torrent session: {}", e)))?;
+        .map_err(|e| {
+            EngineError::Torrent(format!("Failed to initialize torrent session: {}", e))
+        })?;
 
         let add_opts = AddTorrentOptions {
             list_only: true,
@@ -99,7 +101,9 @@ impl TorrentDownloader {
         let resp = session
             .add_torrent(add_torrent, Some(add_opts))
             .await
-            .map_err(|e| EngineError::Torrent(format!("Failed to parse torrent metainfo: {}", e)))?;
+            .map_err(|e| {
+                EngineError::Torrent(format!("Failed to parse torrent metainfo: {}", e))
+            })?;
 
         match resp {
             AddTorrentResponse::ListOnly(list_only) => {
@@ -161,7 +165,7 @@ impl TorrentDownloader {
         source: &str,
         output_dir: &Path,
         concurrency: usize,
-        callback: Box<dyn DownloadProgressCallback>,
+        callback: Arc<dyn DownloadProgressCallback>,
         cancel_token: CancellationToken,
     ) -> Result<DownloadResult, EngineError> {
         let start_time = Instant::now();
@@ -214,8 +218,7 @@ impl TorrentDownloader {
         // Background monitoring task for stats & progress reporting
         let handle_clone = handle.clone();
         let cancel_token_clone = cancel_token.clone();
-        let callback_ref = Arc::new(callback);
-        let callback_loop = callback_ref.clone();
+        let callback_loop = callback.clone();
 
         let monitor_task = tokio::spawn(async move {
             loop {
@@ -235,8 +238,8 @@ impl TorrentDownloader {
                         }
 
                         if let Some(ref live) = stats.live {
-                            let speed_mbps = live.snapshot.download_speed.mbps;
-                            let peer_count = live.snapshot.peers.peers.len();
+                            let speed_mbps = live.download_speed.mbps;
+                            let peer_count = live.snapshot.peer_stats.live;
                             callback_loop.on_status(format!(
                                 "Downloading: {:.1}% ({}/{} bytes) @ {:.2} MiB/s [{} active peers]",
                                 if total > 0 { (progress as f64 / total as f64) * 100.0 } else { 0.0 },
@@ -282,7 +285,7 @@ impl TorrentDownloader {
                     elapsed_millis,
                 };
 
-                callback_ref.on_complete(download_result.clone());
+                callback.on_complete(download_result.clone());
                 info!(
                     "Torrent download finished successfully: {} ({} bytes in {} ms)",
                     download_result.file_path, download_result.total_bytes, elapsed_millis
@@ -306,12 +309,10 @@ impl TorrentDownloader {
         }
     }
 
-    fn extract_handle_metadata(
-        handle: &ManagedTorrentHandle,
-    ) -> Result<TorrentMetadata, EngineError> {
+    fn extract_handle_metadata(handle: &ManagedTorrent) -> Result<TorrentMetadata, EngineError> {
+        let info_hash = handle.info_hash().as_string();
         handle
             .with_metadata(|meta| {
-                let info_hash = meta.info_hash.as_string();
                 let name = meta
                     .info
                     .name
@@ -349,7 +350,7 @@ impl TorrentDownloader {
 
                 TorrentMetadata {
                     name,
-                    info_hash,
+                    info_hash: info_hash.clone(),
                     total_bytes,
                     files,
                 }
@@ -364,7 +365,8 @@ mod tests {
 
     #[test]
     fn test_parse_magnet_uri_hex() {
-        let magnet = "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Ubuntu+21.04+Server";
+        let magnet =
+            "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Ubuntu+21.04+Server";
         let meta = parse_magnet_uri(magnet).expect("Failed to parse valid hex magnet URI");
         assert_eq!(meta.info_hash, "cab507494d02ebb1178b38f2e9d7be299c86b862");
         assert_eq!(meta.name, "Ubuntu 21.04 Server");

@@ -12,6 +12,7 @@ uniffi = { version = "0.32", features = ["cli", "build"] }
 clap = { version = "4.4", features = ["derive"] }
 criterion = "0.8"
 librqbit = "8"
+tracing = "0.1"
 
 [profile.release]
 opt-level = "z"
