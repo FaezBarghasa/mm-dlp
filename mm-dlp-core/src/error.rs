@@ -38,6 +38,12 @@ pub enum EngineError {
 
     #[error("Torrent error: {0}")]
     Torrent(String),
+
+    #[error("Extractor error: {0}")]
+    ExtractorError(String),
+
+    #[error("Concurrency error: {0}")]
+    ConcurrencyError(String),
 }
 
 impl From<std::io::Error> for EngineError {

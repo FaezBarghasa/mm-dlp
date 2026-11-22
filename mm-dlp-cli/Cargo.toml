@@ -9,10 +9,19 @@ mm-dlp-core = { path = "../mm-dlp-core" }
 clap = { version = "4.5.4", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["full"] }
 uniffi = { version = "0.32.0", features = ["cli"] }
+serde_json = { workspace = true }
+
+[lib]
+name = "mm_dlp_cli"
+path = "src/lib.rs"
 
 [[bin]]
 name = "mm-dlp-cli"
-path = "src/main.rs"
+path = "src/bin/mm-dlp-cli.rs"
+
+[[bin]]
+name = "yt-dlp"
+path = "src/bin/yt-dlp.rs"
 
 [[bin]]
 name = "uniffi-bindgen"

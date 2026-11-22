@@ -1,3 +1,4 @@
 fn main() {
     uniffi::generate_scaffolding("./src/mm-dlp.udl").unwrap();
+    println!("cargo:rustc-link-lib=dylib=stdc++");
 }

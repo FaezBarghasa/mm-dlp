@@ -2,7 +2,6 @@ use mm_dlp_core::downloader::torrent::{
     TorrentDownloader, TorrentFileEntry, TorrentMetadata, parse_magnet_uri,
 };
 use mm_dlp_core::error::EngineError;
-use std::path::PathBuf;
 
 #[test]
 fn test_parse_magnet_uri_standard() {

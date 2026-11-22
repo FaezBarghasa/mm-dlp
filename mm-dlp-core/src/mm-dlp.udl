@@ -67,6 +67,8 @@ enum EngineError {
     "Cancelled",
     "QuicFallbackExhausted",
     "Torrent",
+    "ExtractorError",
+    "ConcurrencyError",
 };
 
 callback interface DownloadProgressCallback {

@@ -12,7 +12,7 @@ pub struct Subtitle {
     pub data: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaFormat {
     pub format_id: String,
     pub url: String,

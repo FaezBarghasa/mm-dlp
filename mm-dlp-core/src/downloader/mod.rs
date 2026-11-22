@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::EngineError;
 
+pub mod dash;
 pub mod flusher;
+pub mod hls;
 pub mod manifest;
 pub mod mmap;
 pub mod parallel;

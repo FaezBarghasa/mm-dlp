@@ -1,0 +1,37 @@
+{
+  "app": "oxide-embed",
+  "kind": "project-memory",
+  "project_id": "01a2041f-0eb7-75fa-89fa-04fc5bb3883e",
+  "project_name": "mm-dlp",
+  "schema_version": 1,
+  "min_supported_schema_version": 1,
+  "created_by": {
+    "oxide_embed_version": "0.6.0",
+    "timestamp": "2026-11-22T16:37:53.975065629Z"
+  },
+  "updated_by": {
+    "oxide_embed_version": "0.6.0",
+    "timestamp": "2026-11-22T16:37:53.975110747Z"
+  },
+  "storage": {
+    "engine": "surrealdb",
+    "mode": "embedded",
+    "path": "project.db"
+  },
+  "embedding": {
+    "model": "bge-small-en-v1.5",
+    "file": "model.safetensors",
+    "dimension": 384,
+    "quantization": "f32",
+    "pooling": "Mean",
+    "normalized": true,
+    "vector_set_id": "24e0720242aa3bfd4fe7c8d51440e7b184a0e609c4bae78b8b2329b17a55432b"
+  },
+  "features": {
+    "tree_sitter": true,
+    "symbol_graph": false,
+    "token_stats": true,
+    "secrets_scan": false,
+    "egress_scan": false
+  }
+}

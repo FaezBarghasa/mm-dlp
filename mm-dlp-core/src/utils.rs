@@ -16,7 +16,7 @@ static YOUTUBE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 static VIMEO_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)vimeo\.com").expect("Invalid regex for vimeo"));
 
-/// Strips query params, fragments, and trailing slashes using the `url` crate.
+/// Strips fragments, tracking parameters, and trailing slashes while preserving vital query parameters (like ?v= for YouTube).
 pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
     let trimmed = raw_url.trim();
     if trimmed.starts_with("magnet:") {
@@ -25,14 +25,53 @@ pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
 
     let mut parsed = Url::parse(trimmed)
         .map_err(|e| EngineError::UnsupportedUrl(format!("Invalid URL syntax: {}", e)))?;
-    parsed.set_query(None);
     parsed.set_fragment(None);
+
+    if parsed.path().contains("watch") {
+        let v_param = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "v")
+            .map(|(_, v)| v.into_owned());
+        if let Some(v) = v_param {
+            parsed.set_query(Some(&format!("v={}", v)));
+        } else {
+            parsed.set_query(None);
+        }
+    } else if !parsed.path().ends_with(".m3u8") && !parsed.path().ends_with(".mpd") {
+        parsed.set_query(None);
+    }
 
     let mut clean_str = parsed.to_string();
     if clean_str.len() > 1 && clean_str.ends_with('/') {
         clean_str.pop();
     }
     Ok(clean_str)
+}
+
+/// Expands a yt-dlp output template string (e.g. "%(title)s [%(id)s].%(ext)s").
+pub fn expand_output_template(
+    template: &str,
+    id: &str,
+    title: &str,
+    uploader: Option<&str>,
+    ext: &str,
+) -> String {
+    let uploader_str = uploader.unwrap_or("NA");
+    let safe_title = sanitize_filename(title);
+    let safe_uploader = sanitize_filename(uploader_str);
+    let safe_id = sanitize_filename(id);
+
+    let mut result = template.to_string();
+    result = result.replace("%(title)s", &safe_title);
+    result = result.replace("%(id)s", &safe_id);
+    result = result.replace("%(uploader)s", &safe_uploader);
+    result = result.replace("%(ext)s", ext);
+
+    if !template.contains("%(ext)s") && !result.ends_with(&format!(".{}", ext)) {
+        result = format!("{}.{}", result, ext);
+    }
+
+    sanitize_filename(&result)
 }
 
 /// Detects the platform (e.g. "spotify", "soundcloud", "youtube", "vimeo", "torrent") from URL using `std::sync::LazyLock` regexes.
@@ -144,7 +183,19 @@ mod tests {
     fn test_sanitize_url() {
         let raw = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=shared#t=10/";
         let clean = sanitize_url(raw).unwrap();
-        assert_eq!(clean, "https://www.youtube.com/watch");
+        assert_eq!(clean, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    }
+
+    #[test]
+    fn test_expand_output_template() {
+        let expanded = expand_output_template(
+            "%(title)s [%(id)s].%(ext)s",
+            "dQw4w9WgXcQ",
+            "Never Gonna Give You Up",
+            Some("Rick Astley"),
+            "mp4",
+        );
+        assert_eq!(expanded, "Never Gonna Give You Up [dQw4w9WgXcQ].mp4");
     }
 
     #[test]

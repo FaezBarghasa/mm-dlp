@@ -166,3 +166,92 @@ pub fn tag_file_in_place(
 
     Ok(())
 }
+
+pub async fn mux_streams_to_file(
+    video_path: &Path,
+    audio_path: &Path,
+    output_path: &Path,
+) -> Result<(), EngineError> {
+    let ffmpeg_bin = resolve_ffmpeg_path()?;
+    let mut cmd = Command::new(ffmpeg_bin);
+    cmd.kill_on_drop(true);
+    cmd.arg("-y")
+        .arg("-i")
+        .arg(video_path)
+        .arg("-i")
+        .arg(audio_path)
+        .arg("-c:v")
+        .arg("copy")
+        .arg("-c:a")
+        .arg("aac")
+        .arg(output_path);
+
+    let status = cmd
+        .status()
+        .await
+        .map_err(|e| EngineError::FfmpegError(format!("Failed to execute ffmpeg muxer: {}", e)))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(EngineError::FfmpegError(format!(
+            "ffmpeg exited with status: {}",
+            status
+        )))
+    }
+}
+
+pub async fn extract_audio_from_file(
+    input_path: &Path,
+    output_path: &Path,
+    target_format: &str,
+    target_quality: &str,
+) -> Result<(), EngineError> {
+    let ffmpeg_bin = resolve_ffmpeg_path()?;
+    let mut cmd = Command::new(ffmpeg_bin);
+    cmd.kill_on_drop(true);
+    cmd.arg("-y").arg("-i").arg(input_path).arg("-vn");
+
+    match target_format.to_lowercase().as_str() {
+        "mp3" => {
+            cmd.arg("-c:a").arg("libmp3lame");
+            if target_quality == "best" || target_quality == "0" {
+                cmd.arg("-q:a").arg("0");
+            } else if target_quality.ends_with('k') || target_quality.ends_with('K') {
+                cmd.arg("-b:a").arg(target_quality);
+            } else {
+                cmd.arg("-q:a").arg("2");
+            }
+        }
+        "m4a" | "aac" => {
+            cmd.arg("-c:a").arg("aac").arg("-b:a").arg("256k");
+        }
+        "flac" => {
+            cmd.arg("-c:a").arg("flac");
+        }
+        "opus" => {
+            cmd.arg("-c:a").arg("libopus").arg("-b:a").arg("192k");
+        }
+        "wav" => {
+            cmd.arg("-c:a").arg("pcm_s16le");
+        }
+        _ => {
+            cmd.arg("-c:a").arg("copy");
+        }
+    }
+
+    cmd.arg(output_path);
+
+    let status = cmd.status().await.map_err(|e| {
+        EngineError::FfmpegError(format!("Failed to execute ffmpeg audio extractor: {}", e))
+    })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(EngineError::FfmpegError(format!(
+            "ffmpeg audio extraction exited with status: {}",
+            status
+        )))
+    }
+}

@@ -8,6 +8,9 @@ use crate::error::EngineError;
 use crate::utils;
 
 pub mod common;
+pub mod fallback_bridge;
+pub mod format_selector;
+pub mod generic;
 pub mod registry;
 pub mod soundcloud;
 pub mod spotify;

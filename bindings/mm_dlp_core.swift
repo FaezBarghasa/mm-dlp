@@ -593,9 +593,13 @@ public protocol MmDlpEngineProtocol: AnyObject, Sendable {
     
     func cancelDownload(taskId: String) async  -> Bool
     
+    func downloadTorrent(taskId: String, source: String, outputDir: String, concurrency: UInt32, callback: DownloadProgressCallback) async throws  -> DownloadResult
+    
     func executeDownload(taskId: String, rawUrl: String, downloadConfig: DownloadConfig, callback: DownloadProgressCallback) async throws  -> DownloadResult
     
     func extractMetadata(rawUrl: String) async throws  -> MediaMetadata
+    
+    func getTorrentMetadata(source: String) async throws  -> TorrentMetadata
     
 }
 open class MmDlpEngine: MmDlpEngineProtocol, @unchecked Sendable {
@@ -677,6 +681,22 @@ open func cancelDownload(taskId: String)async  -> Bool  {
         )
 }
     
+open func downloadTorrent(taskId: String, source: String, outputDir: String, concurrency: UInt32, callback: DownloadProgressCallback)async throws  -> DownloadResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_mm_dlp_core_fn_method_mmdlpengine_download_torrent(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(taskId),FfiConverterString.lower(source),FfiConverterString.lower(outputDir),FfiConverterUInt32.lower(concurrency),FfiConverterCallbackInterfaceDownloadProgressCallback_lower(callback)
+                )
+            },
+            pollFunc: ffi_mm_dlp_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_mm_dlp_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_mm_dlp_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDownloadResult_lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
 open func executeDownload(taskId: String, rawUrl: String, downloadConfig: DownloadConfig, callback: DownloadProgressCallback)async throws  -> DownloadResult  {
     return
         try  await uniffiRustCallAsync(
@@ -705,6 +725,22 @@ open func extractMetadata(rawUrl: String)async throws  -> MediaMetadata  {
             completeFunc: ffi_mm_dlp_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_mm_dlp_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMediaMetadata_lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
+open func getTorrentMetadata(source: String)async throws  -> TorrentMetadata  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_mm_dlp_core_fn_method_mmdlpengine_get_torrent_metadata(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(source)
+                )
+            },
+            pollFunc: ffi_mm_dlp_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_mm_dlp_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_mm_dlp_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTorrentMetadata_lift,
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
@@ -1083,6 +1119,126 @@ public func FfiConverterTypeStreamCandidate_lower(_ value: StreamCandidate) -> R
 }
 
 
+public struct TorrentFileEntry: Equatable, Hashable {
+    public var index: UInt64
+    public var path: String
+    public var length: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(index: UInt64, path: String, length: UInt64) {
+        self.index = index
+        self.path = path
+        self.length = length
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TorrentFileEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTorrentFileEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TorrentFileEntry {
+        return
+            try TorrentFileEntry(
+                index: FfiConverterUInt64.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                length: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TorrentFileEntry, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.index, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterUInt64.write(value.length, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTorrentFileEntry_lift(_ buf: RustBuffer) throws -> TorrentFileEntry {
+    return try FfiConverterTypeTorrentFileEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTorrentFileEntry_lower(_ value: TorrentFileEntry) -> RustBuffer {
+    return FfiConverterTypeTorrentFileEntry.lower(value)
+}
+
+
+public struct TorrentMetadata: Equatable, Hashable {
+    public var name: String
+    public var infoHash: String
+    public var totalBytes: UInt64
+    public var files: [TorrentFileEntry]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, infoHash: String, totalBytes: UInt64, files: [TorrentFileEntry]) {
+        self.name = name
+        self.infoHash = infoHash
+        self.totalBytes = totalBytes
+        self.files = files
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TorrentMetadata: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTorrentMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TorrentMetadata {
+        return
+            try TorrentMetadata(
+                name: FfiConverterString.read(from: &buf), 
+                infoHash: FfiConverterString.read(from: &buf), 
+                totalBytes: FfiConverterUInt64.read(from: &buf), 
+                files: FfiConverterSequenceTypeTorrentFileEntry.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TorrentMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.infoHash, into: &buf)
+        FfiConverterUInt64.write(value.totalBytes, into: &buf)
+        FfiConverterSequenceTypeTorrentFileEntry.write(value.files, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTorrentMetadata_lift(_ buf: RustBuffer) throws -> TorrentMetadata {
+    return try FfiConverterTypeTorrentMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTorrentMetadata_lower(_ value: TorrentMetadata) -> RustBuffer {
+    return FfiConverterTypeTorrentMetadata.lower(value)
+}
+
+
 public 
 enum EngineError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -1109,6 +1265,12 @@ enum EngineError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case Cancelled(message: String)
     
     case QuicFallbackExhausted(message: String)
+    
+    case Torrent(message: String)
+    
+    case ExtractorError(message: String)
+    
+    case ConcurrencyError(message: String)
     
 
     
@@ -1183,6 +1345,18 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
         )
         
+        case 12: return .Torrent(
+            message: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 13: return .ExtractorError(
+            message: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 14: return .ConcurrencyError(
+            message: try FfiConverterString.read(from: &buf)
+        )
+        
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1216,6 +1390,12 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(10))
         case .QuicFallbackExhausted(_ /* message is ignored*/):
             writeInt(&buf, Int32(11))
+        case .Torrent(_ /* message is ignored*/):
+            writeInt(&buf, Int32(12))
+        case .ExtractorError(_ /* message is ignored*/):
+            writeInt(&buf, Int32(13))
+        case .ConcurrencyError(_ /* message is ignored*/):
+            writeInt(&buf, Int32(14))
 
         
         }
@@ -1521,6 +1701,31 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         }
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTorrentFileEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [TorrentFileEntry]
+
+    public static func write(_ value: [TorrentFileEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTorrentFileEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TorrentFileEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TorrentFileEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTorrentFileEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -1588,10 +1793,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_cancel_download() != 37552) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_torrent() != 42968) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_execute_download() != 29229) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 29251) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mm_dlp_core_checksum_method_mmdlpengine_get_torrent_metadata() != 58115) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 42421) {

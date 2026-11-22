@@ -722,9 +722,13 @@ internal object IntegrityCheckingUniffiLib {
     }
     external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_cancel_download(
     ): Int
+    external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_torrent(
+    ): Int
     external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_execute_download(
     ): Int
     external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata(
+    ): Int
+    external fun uniffi_mm_dlp_core_checksum_method_mmdlpengine_get_torrent_metadata(
     ): Int
     external fun uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new(
     ): Int
@@ -763,9 +767,13 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_cancel_download(`ptr`: Long,`taskId`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_download_torrent(`ptr`: Long,`taskId`: RustBuffer.ByValue,`source`: RustBuffer.ByValue,`outputDir`: RustBuffer.ByValue,`concurrency`: Int,`callback`: Long,
+    ): Long
     external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_execute_download(`ptr`: Long,`taskId`: RustBuffer.ByValue,`rawUrl`: RustBuffer.ByValue,`downloadConfig`: RustBuffer.ByValue,`callback`: Long,
     ): Long
     external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_extract_metadata(`ptr`: Long,`rawUrl`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_mm_dlp_core_fn_method_mmdlpengine_get_torrent_metadata(`ptr`: Long,`source`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_mm_dlp_core_fn_init_callback_vtable_downloadprogresscallback(`vtable`: UniffiVTableCallbackInterfaceDownloadProgressCallback,
     ): Unit
@@ -891,10 +899,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_cancel_download() != 37552) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_download_torrent() != 42968) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_execute_download() != 29229) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_extract_metadata() != 29251) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_mm_dlp_core_checksum_method_mmdlpengine_get_torrent_metadata() != 58115) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mm_dlp_core_checksum_constructor_mmdlpengine_new() != 42421) {
@@ -1389,9 +1403,13 @@ public interface MmDlpEngineInterface {
     
     suspend fun `cancelDownload`(`taskId`: kotlin.String): kotlin.Boolean
     
+    suspend fun `downloadTorrent`(`taskId`: kotlin.String, `source`: kotlin.String, `outputDir`: kotlin.String, `concurrency`: kotlin.UInt, `callback`: DownloadProgressCallback): DownloadResult
+    
     suspend fun `executeDownload`(`taskId`: kotlin.String, `rawUrl`: kotlin.String, `downloadConfig`: DownloadConfig, `callback`: DownloadProgressCallback): DownloadResult
     
     suspend fun `extractMetadata`(`rawUrl`: kotlin.String): MediaMetadata
+    
+    suspend fun `getTorrentMetadata`(`source`: kotlin.String): TorrentMetadata
     
     companion object
 }
@@ -1530,6 +1548,32 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
     
     @Throws(EngineException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `downloadTorrent`(`taskId`: kotlin.String, `source`: kotlin.String, `outputDir`: kotlin.String, `concurrency`: kotlin.UInt, `callback`: DownloadProgressCallback) : DownloadResult {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_mm_dlp_core_fn_method_mmdlpengine_download_torrent(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`taskId`),
+        FfiConverterString.lower(`source`),
+        FfiConverterString.lower(`outputDir`),
+        FfiConverterUInt.lower(`concurrency`),
+        FfiConverterTypeDownloadProgressCallback.lower(`callback`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_mm_dlp_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_mm_dlp_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_mm_dlp_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeDownloadResult.lift(it) },
+        // Error FFI converter
+        EngineException.ErrorHandler,
+    )
+    }
+
+    
+    @Throws(EngineException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `executeDownload`(`taskId`: kotlin.String, `rawUrl`: kotlin.String, `downloadConfig`: DownloadConfig, `callback`: DownloadProgressCallback) : DownloadResult {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
@@ -1569,6 +1613,28 @@ open class MmDlpEngine: Disposable, AutoCloseable, MmDlpEngineInterface
         { future -> UniffiLib.ffi_mm_dlp_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeMediaMetadata.lift(it) },
+        // Error FFI converter
+        EngineException.ErrorHandler,
+    )
+    }
+
+    
+    @Throws(EngineException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getTorrentMetadata`(`source`: kotlin.String) : TorrentMetadata {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_mm_dlp_core_fn_method_mmdlpengine_get_torrent_metadata(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`source`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_mm_dlp_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_mm_dlp_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_mm_dlp_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTorrentMetadata.lift(it) },
         // Error FFI converter
         EngineException.ErrorHandler,
     )
@@ -1874,6 +1940,97 @@ public object FfiConverterTypeStreamCandidate: FfiConverterRustBuffer<StreamCand
 
 
 
+data class TorrentFileEntry (
+    var `index`: kotlin.ULong
+    , 
+    var `path`: kotlin.String
+    , 
+    var `length`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTorrentFileEntry: FfiConverterRustBuffer<TorrentFileEntry> {
+    override fun read(buf: ByteBuffer): TorrentFileEntry {
+        return TorrentFileEntry(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TorrentFileEntry) = (
+            FfiConverterULong.allocationSize(value.`index`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterULong.allocationSize(value.`length`)
+    )
+
+    override fun write(value: TorrentFileEntry, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`index`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterULong.write(value.`length`, buf)
+    }
+}
+
+
+
+data class TorrentMetadata (
+    var `name`: kotlin.String
+    , 
+    var `infoHash`: kotlin.String
+    , 
+    var `totalBytes`: kotlin.ULong
+    , 
+    var `files`: List<TorrentFileEntry>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTorrentMetadata: FfiConverterRustBuffer<TorrentMetadata> {
+    override fun read(buf: ByteBuffer): TorrentMetadata {
+        return TorrentMetadata(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterSequenceTypeTorrentFileEntry.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TorrentMetadata) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`infoHash`) +
+            FfiConverterULong.allocationSize(value.`totalBytes`) +
+            FfiConverterSequenceTypeTorrentFileEntry.allocationSize(value.`files`)
+    )
+
+    override fun write(value: TorrentMetadata, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`infoHash`, buf)
+            FfiConverterULong.write(value.`totalBytes`, buf)
+            FfiConverterSequenceTypeTorrentFileEntry.write(value.`files`, buf)
+    }
+}
+
+
+
 
 
 sealed class EngineException(message: String): kotlin.Exception(message) {
@@ -1900,6 +2057,12 @@ sealed class EngineException(message: String): kotlin.Exception(message) {
         
         class QuicFallbackExhausted(message: String) : EngineException(message)
         
+        class Torrent(message: String) : EngineException(message)
+        
+        class ExtractorException(message: String) : EngineException(message)
+        
+        class ConcurrencyException(message: String) : EngineException(message)
+        
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<EngineException> {
         override fun lift(error_buf: RustBuffer.ByValue): EngineException = FfiConverterTypeEngineError.lift(error_buf)
@@ -1924,6 +2087,9 @@ public object FfiConverterTypeEngineError : FfiConverterRustBuffer<EngineExcepti
             9 -> EngineException.InvalidConfig(FfiConverterString.read(buf))
             10 -> EngineException.Cancelled(FfiConverterString.read(buf))
             11 -> EngineException.QuicFallbackExhausted(FfiConverterString.read(buf))
+            12 -> EngineException.Torrent(FfiConverterString.read(buf))
+            13 -> EngineException.ExtractorException(FfiConverterString.read(buf))
+            14 -> EngineException.ConcurrencyException(FfiConverterString.read(buf))
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
         
@@ -1977,6 +2143,18 @@ public object FfiConverterTypeEngineError : FfiConverterRustBuffer<EngineExcepti
             }
             is EngineException.QuicFallbackExhausted -> {
                 buf.putInt(11)
+                Unit
+            }
+            is EngineException.Torrent -> {
+                buf.putInt(12)
+                Unit
+            }
+            is EngineException.ExtractorException -> {
+                buf.putInt(13)
+                Unit
+            }
+            is EngineException.ConcurrencyException -> {
+                buf.putInt(14)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2181,6 +2359,34 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
         } else {
             buf.put(1)
             FfiConverterString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTorrentFileEntry: FfiConverterRustBuffer<List<TorrentFileEntry>> {
+    override fun read(buf: ByteBuffer): List<TorrentFileEntry> {
+        val len = buf.getInt()
+        return List<TorrentFileEntry>(len) {
+            FfiConverterTypeTorrentFileEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TorrentFileEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTorrentFileEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TorrentFileEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTorrentFileEntry.write(it, buf)
         }
     }
 }

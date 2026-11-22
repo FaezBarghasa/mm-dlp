@@ -1,18 +1,59 @@
 use reqwest::Client;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{DownloadConfig, DownloadResult, EngineConfig, MediaMetadata};
+pub use crate::downloader::dash::DashDownloader;
+pub use crate::downloader::hls::HlsDownloader;
 pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
 use crate::downloader::{build_http_client, fetch_with_fallback, stream_to_file};
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;
-use crate::processor::{download_cover_art, tag_file_in_place};
+use crate::extractor::format_selector::{FormatSelector, SelectedFormat};
+use crate::extractor::traits::MediaFormat;
+use crate::processor::{
+    download_cover_art, extract_audio_from_file, mux_streams_to_file, tag_file_in_place,
+};
 use crate::resolver::SourceResolver;
-use crate::utils::{resolve_duplicate_path, sanitize_filename, sanitize_url, validate_output_path};
+use crate::utils::{
+    expand_output_template, resolve_duplicate_path, sanitize_filename, sanitize_url,
+    validate_output_path,
+};
+
+#[derive(Debug, Clone)]
+pub struct MediaDownloadOptions {
+    pub format_selector: String,
+    pub output_dir: String,
+    pub output_template: String,
+    pub concurrent_fragments: usize,
+    pub extract_audio: bool,
+    pub audio_format: String,
+    pub audio_quality: String,
+    pub write_thumbnail: bool,
+    pub embed_thumbnail: bool,
+    pub embed_metadata: bool,
+}
+
+impl Default for MediaDownloadOptions {
+    fn default() -> Self {
+        Self {
+            format_selector: "bestvideo+bestaudio/best".to_string(),
+            output_dir: ".".to_string(),
+            output_template: "%(title)s [%(id)s].%(ext)s".to_string(),
+            concurrent_fragments: 8,
+            extract_audio: false,
+            audio_format: "mp3".to_string(),
+            audio_quality: "best".to_string(),
+            write_thumbnail: false,
+            embed_thumbnail: false,
+            embed_metadata: true,
+        }
+    }
+}
 
 pub trait DownloadProgressCallback: Send + Sync {
     fn on_status(&self, status: String);
@@ -111,9 +152,10 @@ impl MmDlpEngine {
         raw_url: &str,
     ) -> Result<crate::extractor::traits::MediaInfo, EngineError> {
         let clean_url = sanitize_url(raw_url)?;
-        let extractor = crate::extractor::registry::route_url(&clean_url).ok_or_else(|| {
-            EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
-        })?;
+        let extractor =
+            crate::extractor::registry::route_url_with_fallback(&clean_url).ok_or_else(|| {
+                EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
+            })?;
         extractor.extract_metadata(&self.client, &clean_url).await
     }
 
@@ -240,6 +282,240 @@ impl MmDlpEngine {
             true
         } else {
             false
+        }
+    }
+
+    pub async fn download_media(
+        &self,
+        task_id: String,
+        raw_url: String,
+        options: MediaDownloadOptions,
+        callback: Arc<dyn DownloadProgressCallback>,
+    ) -> Result<DownloadResult, EngineError> {
+        let start_time = Instant::now();
+        let cancel_token = CancellationToken::new();
+        {
+            let mut tasks = self.active_tasks.write().await;
+            tasks.insert(task_id.clone(), cancel_token.clone());
+        }
+
+        let callback_run = callback.clone();
+        let run_dl = async {
+            let clean_url = sanitize_url(&raw_url)?;
+            let output_dir_path = validate_output_path(&options.output_dir)?;
+
+            if clean_url.starts_with("magnet:") || clean_url.ends_with(".torrent") {
+                let session_dir = output_dir_path.join(".mm-dlp-session");
+                let downloader = TorrentDownloader::new(session_dir)?;
+                return downloader
+                    .download(
+                        task_id.clone(),
+                        &clean_url,
+                        &output_dir_path,
+                        options.concurrent_fragments,
+                        callback_run,
+                        cancel_token.clone(),
+                    )
+                    .await;
+            }
+
+            callback_run.on_status(format!("Extracting metadata from {}", clean_url));
+            let info = self.extract_info(&clean_url).await?;
+
+            callback_run.on_status(format!("Resolving format for '{}'", info.title));
+            let selected = FormatSelector::select(&info, &options.format_selector)?;
+
+            let ext = if options.extract_audio {
+                &options.audio_format
+            } else {
+                selected.primary_ext()
+            };
+
+            let target_filename = expand_output_template(
+                &options.output_template,
+                &info.id,
+                &info.title,
+                info.uploader.as_deref(),
+                ext,
+            );
+
+            let raw_target_path = output_dir_path.join(&target_filename);
+            let final_target_path = resolve_duplicate_path(&raw_target_path);
+
+            let mut total_bytes = 0u64;
+
+            match selected {
+                SelectedFormat::Merged { video, audio } => {
+                    let tmp_video =
+                        output_dir_path.join(format!("{}.tmp.v.{}", info.id, video.ext));
+                    let tmp_audio =
+                        output_dir_path.join(format!("{}.tmp.a.{}", info.id, audio.ext));
+
+                    callback_run.on_status(format!(
+                        "Downloading video stream [{}] ({}x{})",
+                        video.format_id,
+                        video.width.unwrap_or(0),
+                        video.height.unwrap_or(0)
+                    ));
+                    let v_bytes = self
+                        .download_format_stream(
+                            video,
+                            &tmp_video,
+                            options.concurrent_fragments,
+                            cancel_token.clone(),
+                        )
+                        .await?;
+                    total_bytes += v_bytes;
+
+                    callback_run.on_status(format!(
+                        "Downloading audio stream [{}] ({:.0} kbps)",
+                        audio.format_id,
+                        audio.tbr.unwrap_or(0.0)
+                    ));
+                    let a_bytes = self
+                        .download_format_stream(
+                            audio,
+                            &tmp_audio,
+                            options.concurrent_fragments,
+                            cancel_token.clone(),
+                        )
+                        .await?;
+                    total_bytes += a_bytes;
+
+                    callback_run.on_status("Muxing video and audio streams with ffmpeg".into());
+                    if let Err(e) =
+                        mux_streams_to_file(&tmp_video, &tmp_audio, &final_target_path).await
+                    {
+                        let _ = tokio::fs::remove_file(&tmp_video).await;
+                        let _ = tokio::fs::remove_file(&tmp_audio).await;
+                        return Err(e);
+                    }
+
+                    let _ = tokio::fs::remove_file(&tmp_video).await;
+                    let _ = tokio::fs::remove_file(&tmp_audio).await;
+                }
+                SelectedFormat::Single(format) => {
+                    callback_run.on_status(format!(
+                        "Downloading single format [{}] ({})",
+                        format.format_id, format.ext
+                    ));
+
+                    if options.extract_audio && format.has_video() {
+                        let tmp_video =
+                            output_dir_path.join(format!("{}.tmp.raw.{}", info.id, format.ext));
+                        let bytes = self
+                            .download_format_stream(
+                                format,
+                                &tmp_video,
+                                options.concurrent_fragments,
+                                cancel_token.clone(),
+                            )
+                            .await?;
+                        total_bytes += bytes;
+
+                        callback_run.on_status(format!(
+                            "Extracting audio track to {}",
+                            options.audio_format
+                        ));
+                        if let Err(e) = extract_audio_from_file(
+                            &tmp_video,
+                            &final_target_path,
+                            &options.audio_format,
+                            &options.audio_quality,
+                        )
+                        .await
+                        {
+                            let _ = tokio::fs::remove_file(&tmp_video).await;
+                            return Err(e);
+                        }
+                        let _ = tokio::fs::remove_file(&tmp_video).await;
+                    } else {
+                        let bytes = self
+                            .download_format_stream(
+                                format,
+                                &final_target_path,
+                                options.concurrent_fragments,
+                                cancel_token.clone(),
+                            )
+                            .await?;
+                        total_bytes += bytes;
+                    }
+                }
+            }
+
+            if options.write_thumbnail
+                && let Some(ref thumb_url) = info.thumbnail
+            {
+                callback_run.on_status("Writing thumbnail image".into());
+                let thumb_path = final_target_path.with_extension("jpg");
+                if let Ok(thumb_data) = self.client.get(thumb_url).send().await
+                    && let Ok(bytes) = thumb_data.bytes().await
+                {
+                    let _ = tokio::fs::write(&thumb_path, bytes).await;
+                }
+            }
+
+            if options.embed_metadata
+                && let Some(ref art_url) = info.thumbnail
+            {
+                let cover_art = download_cover_art(&self.client, art_url).await;
+                let legacy_meta = MediaMetadata {
+                    id: info.id.clone(),
+                    title: info.title.clone(),
+                    artist: info.uploader.clone().unwrap_or_else(|| "Unknown".into()),
+                    album: None,
+                    duration_seconds: info.duration.unwrap_or(0) as u64,
+                    thumbnail_url: info.thumbnail.clone(),
+                    webpage_url: info.webpage_url.clone().unwrap_or_default(),
+                };
+                let _ = tag_file_in_place(&final_target_path, &legacy_meta, cover_art);
+            }
+
+            callback_run.on_progress(100.0);
+
+            let elapsed_millis = start_time.elapsed().as_millis() as u64;
+            let result = DownloadResult {
+                file_path: final_target_path.to_string_lossy().to_string(),
+                total_bytes,
+                elapsed_millis,
+            };
+            callback_run.on_complete(result.clone());
+            Ok(result)
+        };
+
+        let result: Result<DownloadResult, EngineError> = run_dl.await;
+        {
+            let mut tasks = self.active_tasks.write().await;
+            tasks.remove(&task_id);
+        }
+
+        if let Err(ref err) = result {
+            callback.on_error(err.clone());
+        }
+
+        result
+    }
+
+    async fn download_format_stream(
+        &self,
+        format: &MediaFormat,
+        dest: &Path,
+        concurrency: usize,
+        cancel_token: CancellationToken,
+    ) -> Result<u64, EngineError> {
+        if format.protocol.as_deref() == Some("m3u8_native") || format.url.contains(".m3u8") {
+            let hls = HlsDownloader::new(self.client.clone(), concurrency);
+            hls.download_to_file(&format.url, dest, cancel_token, None)
+                .await
+        } else if format.protocol.as_deref() == Some("http_dash_segments")
+            || format.url.contains(".mpd")
+        {
+            let dash = DashDownloader::new(self.client.clone(), concurrency);
+            dash.download_to_file(&format.url, dest, cancel_token, None)
+                .await
+        } else {
+            let resp = fetch_with_fallback(&self.client, &format.url).await?;
+            stream_to_file(resp, dest, cancel_token).await
         }
     }
 }
