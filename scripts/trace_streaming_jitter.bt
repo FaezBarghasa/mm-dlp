@@ -1,0 +1,50 @@
+#!/usr/bin/env bpftrace
+/*
+ * trace_streaming_jitter.bt - Trace Linux TCP receive buffer auto-tuning & streaming drops
+ *
+ * Usage:
+ *   sudo bpftrace scripts/trace_streaming_jitter.bt
+ */
+
+BEGIN
+{
+    printf("Tracing mm-dlp TCP streaming performance, jitter, and buffer tuning... Hit Ctrl-C to stop.\n");
+    printf("%-8s %-16s %-6s %-20s %-10s\n", "TIME", "COMM", "PID", "EVENT", "VALUE");
+}
+
+/* Trace TCP receive space window adjustment */
+tracepoint:tcp:tcp_rcv_space_adjust
+/comm == "mm-dlp" || comm == "mm-dlp-cli" || comm == "yt-dlp"/
+{
+    time("%H:%M:%S ");
+    printf("%-16s %-6d %-20s %d bytes\n", comm, pid, "rcv_space_adjust", args.copied_seq);
+    @rcv_space_bytes[comm] = hist(args.copied_seq);
+}
+
+/* Trace kernel packet drops during streaming */
+tracepoint:skb:kfree_skb
+/comm == "mm-dlp" || comm == "mm-dlp-cli" || comm == "yt-dlp"/
+{
+    time("%H:%M:%S ");
+    printf("%-16s %-6d %-20s loc: 0x%lx\n", comm, pid, "skb_drop", args.location);
+    @drop_locations[args.location] = count();
+    @total_drops[comm] = count();
+}
+
+/* Periodic status every 5 seconds */
+interval:s:5
+{
+    time("%H:%M:%S --- 5s Summary ---\n");
+    print(@total_drops);
+}
+
+END
+{
+    printf("\n=== Final Streaming Buffer & Drop Report ===\n");
+    print(@rcv_space_bytes);
+    print(@drop_locations);
+    print(@total_drops);
+    clear(@rcv_space_bytes);
+    clear(@drop_locations);
+    clear(@total_drops);
+}

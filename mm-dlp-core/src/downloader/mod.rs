@@ -57,6 +57,26 @@ pub async fn stream_to_file(
     target_path: &Path,
     cancel_token: CancellationToken,
 ) -> Result<u64, EngineError> {
+    if target_path == Path::new("-") {
+        let mut stdout = tokio::io::stdout();
+        let mut downloaded_bytes: u64 = 0;
+
+        while let Some(chunk_res) = response
+            .chunk()
+            .await
+            .map_err(|e| EngineError::Network(e.to_string()))?
+        {
+            if cancel_token.is_cancelled() {
+                return Err(EngineError::Cancelled);
+            }
+            stdout.write_all(&chunk_res).await?;
+            downloaded_bytes += chunk_res.len() as u64;
+        }
+
+        stdout.flush().await?;
+        return Ok(downloaded_bytes);
+    }
+
     let tmp_path = target_path.with_extension("tmp");
     let mut file = File::create(&tmp_path).await?;
     let mut downloaded_bytes: u64 = 0;
@@ -79,4 +99,32 @@ pub async fn stream_to_file(
 
     tokio::fs::rename(&tmp_path, target_path).await?;
     Ok(downloaded_bytes)
+}
+
+#[cfg(target_os = "linux")]
+pub mod splice {
+    use std::io;
+    use std::os::unix::io::RawFd;
+
+    /// Perform a zero-copy Linux splice operation forwarding bytes directly to stdout.
+    ///
+    /// # Safety
+    /// Requires a valid file descriptor `in_fd`.
+    pub unsafe fn splice_fd_to_stdout(in_fd: RawFd, len: usize) -> io::Result<usize> {
+        let ret = unsafe {
+            libc::splice(
+                in_fd,
+                std::ptr::null_mut(),
+                libc::STDOUT_FILENO,
+                std::ptr::null_mut(),
+                len,
+                libc::SPLICE_F_MOVE | libc::SPLICE_F_MORE,
+            )
+        };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret as usize)
+        }
+    }
 }

@@ -10,24 +10,35 @@ use std::sync::Arc;
 
 struct CliProgressCallback {
     has_completed: AtomicBool,
+    is_stdout_stream: bool,
 }
 
 impl CliProgressCallback {
-    fn new() -> Self {
+    fn new(is_stdout_stream: bool) -> Self {
         Self {
             has_completed: AtomicBool::new(false),
+            is_stdout_stream,
         }
     }
 }
 
 impl DownloadProgressCallback for CliProgressCallback {
     fn on_status(&self, status: String) {
-        println!("[download] {}", status);
+        if self.is_stdout_stream {
+            eprintln!("[download] {}", status);
+        } else {
+            println!("[download] {}", status);
+        }
     }
 
     fn on_progress(&self, progress_percentage: f64) {
-        print!("\r[download] {:>5.1}%", progress_percentage);
-        let _ = std::io::stdout().flush();
+        if self.is_stdout_stream {
+            eprint!("\r[download] {:>5.1}%", progress_percentage);
+            let _ = std::io::stderr().flush();
+        } else {
+            print!("\r[download] {:>5.1}%", progress_percentage);
+            let _ = std::io::stdout().flush();
+        }
     }
 
     fn on_error(&self, error: EngineError) {
@@ -36,12 +47,21 @@ impl DownloadProgressCallback for CliProgressCallback {
 
     fn on_complete(&self, result: DownloadResult) {
         self.has_completed.store(true, Ordering::SeqCst);
-        println!(
-            "\n[complete] 100% of {} in {:.2}s (at {})",
-            format_file_size(result.total_bytes),
-            result.elapsed_millis as f64 / 1000.0,
-            result.file_path
-        );
+        if self.is_stdout_stream {
+            eprintln!(
+                "\n[complete] 100% of {} in {:.2}s (at {})",
+                format_file_size(result.total_bytes),
+                result.elapsed_millis as f64 / 1000.0,
+                result.file_path
+            );
+        } else {
+            println!(
+                "\n[complete] 100% of {} in {:.2}s (at {})",
+                format_file_size(result.total_bytes),
+                result.elapsed_millis as f64 / 1000.0,
+                result.file_path
+            );
+        }
     }
 }
 
@@ -136,6 +156,14 @@ struct Cli {
     /// Download entire playlist
     #[arg(long = "yes-playlist")]
     yes_playlist: bool,
+
+    /// Write media stream directly to stdout without intermediate files (alias for -o -)
+    #[arg(long = "stdout")]
+    stdout: bool,
+
+    /// Apply EBU R128 real-time loudness normalization filter
+    #[arg(long = "loudness-norm")]
+    loudness_norm: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -293,20 +321,33 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // 7. Full download path
+        let is_stdout = cli.output == "-" || cli.paths == "-" || cli.stdout;
+        let effective_output = if is_stdout {
+            "-".to_string()
+        } else {
+            cli.output.clone()
+        };
+
         let options = MediaDownloadOptions {
             format_selector: cli.format.clone(),
-            output_dir: cli.paths.clone(),
-            output_template: cli.output.clone(),
+            output_dir: if is_stdout {
+                "-".to_string()
+            } else {
+                cli.paths.clone()
+            },
+            output_template: effective_output,
             concurrent_fragments: cli.concurrent_fragments,
             extract_audio: cli.extract_audio,
             audio_format: cli.audio_format.clone(),
             audio_quality: cli.audio_quality.clone(),
-            write_thumbnail: cli.write_thumbnail,
-            embed_thumbnail: cli.embed_thumbnail,
-            embed_metadata: cli.embed_metadata,
+            write_thumbnail: cli.write_thumbnail && !is_stdout,
+            embed_thumbnail: cli.embed_thumbnail && !is_stdout,
+            embed_metadata: cli.embed_metadata && !is_stdout,
+            loudness_norm: cli.loudness_norm,
         };
 
-        let callback: Arc<dyn DownloadProgressCallback> = Arc::new(CliProgressCallback::new());
+        let callback: Arc<dyn DownloadProgressCallback> =
+            Arc::new(CliProgressCallback::new(is_stdout));
         let task_id = format!(
             "dl_{}",
             std::time::SystemTime::now()
@@ -314,7 +355,11 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 .as_millis()
         );
 
-        println!("[{}] {}: Downloading", info.id, info.title);
+        if is_stdout {
+            eprintln!("[{}] {}: Streaming to stdout", info.id, info.title);
+        } else {
+            println!("[{}] {}: Downloading", info.id, info.title);
+        }
         let _ = engine
             .download_media(task_id, url.clone(), options, callback)
             .await;
@@ -428,9 +473,10 @@ async fn handle_legacy_download(
         write_thumbnail: false,
         embed_thumbnail: false,
         embed_metadata: true,
+        loudness_norm: false,
     };
 
-    let callback: Arc<dyn DownloadProgressCallback> = Arc::new(CliProgressCallback::new());
+    let callback: Arc<dyn DownloadProgressCallback> = Arc::new(CliProgressCallback::new(false));
     let task_id = format!(
         "legacy_{}",
         std::time::SystemTime::now()

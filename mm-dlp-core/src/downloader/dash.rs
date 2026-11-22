@@ -1,6 +1,8 @@
 use reqwest::Client;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Semaphore, mpsc};
@@ -21,6 +23,8 @@ pub struct DashSegment {
 pub struct DashManifest {
     pub init_url: Option<String>,
     pub media_segments: Vec<DashSegment>,
+    pub is_dynamic: bool,
+    pub min_update_period: Option<f64>,
 }
 
 pub struct DashDownloader {
@@ -40,6 +44,8 @@ impl DashDownloader {
     pub fn parse_manifest(manifest: &str, base_url: &str) -> Result<DashManifest, EngineError> {
         let mut init_url = None;
         let mut segments = Vec::new();
+        let mut is_dynamic = false;
+        let mut min_update_period = None;
 
         // 1. Look for BaseURL tag
         let mut effective_base = base_url.to_string();
@@ -50,14 +56,25 @@ impl DashDownloader {
             effective_base = resolve_url(base_url, inner.trim());
         }
 
-        // 2. Parse mediaPresentationDuration from root MPD tag if present
+        // 2. Parse MPD root attributes: type, mediaPresentationDuration, minimumUpdatePeriod
         let mut presentation_duration_secs: Option<f64> = None;
         if let Some(mpd_start) = manifest.find("<MPD") {
             let mpd_slice = &manifest[mpd_start..];
             let end_tag = mpd_slice.find('>').unwrap_or(mpd_slice.len());
             let mpd_attrs = &mpd_slice[..end_tag];
+
+            if let Some(t_attr) = extract_attribute(mpd_attrs, "type")
+                && t_attr.to_lowercase() == "dynamic"
+            {
+                is_dynamic = true;
+            }
+
             if let Some(dur_str) = extract_attribute(mpd_attrs, "mediaPresentationDuration") {
                 presentation_duration_secs = parse_iso8601_duration(&dur_str);
+            }
+
+            if let Some(mup_str) = extract_attribute(mpd_attrs, "minimumUpdatePeriod") {
+                min_update_period = parse_iso8601_duration(&mup_str);
             }
         }
 
@@ -166,7 +183,7 @@ impl DashDownloader {
             }
         }
 
-        // 3. Fallback to SegmentList or direct segment URLs if SegmentTemplate not found
+        // 4. Fallback to SegmentList or direct segment URLs if SegmentTemplate not found
         if segments.is_empty() {
             let mut index = 0;
             for line in manifest.lines() {
@@ -188,10 +205,12 @@ impl DashDownloader {
         Ok(DashManifest {
             init_url,
             media_segments: segments,
+            is_dynamic,
+            min_update_period,
         })
     }
 
-    /// Download all segments of a DASH manifest into a destination file.
+    /// Download all segments of a DASH manifest into a destination file or stdout.
     pub async fn download_to_file(
         &self,
         manifest_url: &str,
@@ -209,9 +228,7 @@ impl DashDownloader {
         })?;
 
         let manifest = Self::parse_manifest(&text, manifest_url)?;
-        let total_segments = manifest.media_segments.len();
-
-        let mut file = File::create(dest_path).await?;
+        let is_stdout = dest_path == Path::new("-");
         let mut total_bytes = 0u64;
 
         // Fetch initialization segment if available
@@ -226,15 +243,29 @@ impl DashDownloader {
                 .await
                 .map_err(|e| EngineError::Network(format!("Failed to read init bytes: {}", e)))?;
             total_bytes += init_bytes.len() as u64;
-            file.write_all(&init_bytes).await?;
+
+            if is_stdout {
+                let mut stdout = tokio::io::stdout();
+                stdout.write_all(&init_bytes).await?;
+                stdout.flush().await?;
+            } else {
+                let mut file = File::create(dest_path).await?;
+                file.write_all(&init_bytes).await?;
+                file.flush().await?;
+            }
         }
 
+        if manifest.is_dynamic {
+            let dynamic_bytes = self
+                .download_dynamic_stream(manifest_url, dest_path, manifest, cancel_token, progress)
+                .await?;
+            return Ok(total_bytes + dynamic_bytes);
+        }
+
+        let total_segments = manifest.media_segments.len();
         if total_segments == 0 {
-            file.flush().await?;
             return Ok(total_bytes);
         }
-        file.flush().await?;
-        drop(file);
 
         #[cfg(target_os = "ios")]
         let effective_concurrency = self.concurrency.clamp(1, 4);
@@ -251,9 +282,13 @@ impl DashDownloader {
 
         let flusher_handle = tokio::spawn(async move {
             let flusher = SequentialFlusher::new();
-            flusher
-                .flush_to_disk_with_append(dest_path_buf, rx, total_segments, true)
-                .await
+            if is_stdout {
+                flusher.flush_to_stdout(rx, total_segments).await
+            } else {
+                flusher
+                    .flush_to_disk_with_append(dest_path_buf, rx, total_segments, true)
+                    .await
+            }
         });
 
         let semaphore = Arc::new(Semaphore::new(effective_concurrency));
@@ -311,11 +346,244 @@ impl DashDownloader {
         }
 
         drop(tx);
-        let media_bytes = flusher_handle
+        let flushed_bytes = flusher_handle
             .await
             .map_err(|e| EngineError::ConcurrencyError(e.to_string()))??;
 
-        Ok(total_bytes + media_bytes)
+        Ok(total_bytes + flushed_bytes)
+    }
+
+    /// Dynamic DASH live stream edge tracker loop.
+    pub async fn download_dynamic_stream(
+        &self,
+        manifest_url: &str,
+        dest_path: &Path,
+        initial_manifest: DashManifest,
+        cancel_token: CancellationToken,
+        progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    ) -> Result<u64, EngineError> {
+        let is_stdout = dest_path == Path::new("-");
+        let dest_path_buf = dest_path.to_path_buf();
+
+        #[cfg(target_os = "ios")]
+        let effective_concurrency = self.concurrency.clamp(1, 4);
+        #[cfg(not(target_os = "ios"))]
+        let effective_concurrency = self.concurrency;
+
+        #[cfg(target_os = "ios")]
+        let buffer_capacity = effective_concurrency.max(2);
+        #[cfg(not(target_os = "ios"))]
+        let buffer_capacity = (effective_concurrency * 2).max(16);
+
+        let (tx, rx) = mpsc::channel(buffer_capacity);
+        let cancel_flusher = cancel_token.clone();
+
+        let flusher_handle = tokio::spawn(async move {
+            let flusher = SequentialFlusher::new();
+            if is_stdout {
+                flusher.flush_live_to_stdout(rx, cancel_flusher).await
+            } else {
+                let file = SequentialFlusher::open_file_optimized(&dest_path_buf, true).await?;
+                let writer = tokio::io::BufWriter::new(file);
+                flusher
+                    .flush_live_to_writer(writer, rx, cancel_flusher)
+                    .await
+            }
+        });
+
+        let mut seen_urls = HashSet::new();
+        let semaphore = Arc::new(Semaphore::new(effective_concurrency));
+        let mut join_set = JoinSet::new();
+        let mut current_seq_idx = 0usize;
+        let mut current_manifest = initial_manifest;
+
+        let poll_interval = Duration::from_secs_f64(
+            current_manifest
+                .min_update_period
+                .unwrap_or(2.0)
+                .clamp(0.5, 10.0),
+        );
+
+        loop {
+            if cancel_token.is_cancelled() {
+                break;
+            }
+
+            for seg in &current_manifest.media_segments {
+                if seen_urls.insert(seg.url.clone()) {
+                    let assigned_index = current_seq_idx;
+                    current_seq_idx += 1;
+
+                    let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
+                        EngineError::ConcurrencyError(format!("Semaphore failed: {}", e))
+                    })?;
+                    let client = self.client.clone();
+                    let token = cancel_token.clone();
+                    let seg_url = seg.url.clone();
+
+                    join_set.spawn(async move {
+                        let _permit = permit;
+                        if token.is_cancelled() {
+                            return Err(EngineError::Cancelled);
+                        }
+
+                        let bytes = client
+                            .get(&seg_url)
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                EngineError::Network(format!(
+                                    "Dynamic DASH segment fetch failed: {}",
+                                    e
+                                ))
+                            })?
+                            .bytes()
+                            .await
+                            .map_err(|e| {
+                                EngineError::Network(format!(
+                                    "Dynamic DASH segment read failed: {}",
+                                    e
+                                ))
+                            })?;
+
+                        Ok(SequencedChunk {
+                            index: assigned_index,
+                            data: bytes,
+                        })
+                    });
+                }
+            }
+
+            while let Some(res) = join_set.try_join_next() {
+                if let Ok(chunk_res) = res {
+                    match chunk_res {
+                        Ok(chunk) => {
+                            if tx.send(Ok(chunk)).await.is_err() {
+                                break;
+                            }
+                            if let Some(ref cb) = progress {
+                                cb(current_seq_idx, current_seq_idx);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(e)).await;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                _ = tokio::time::sleep(poll_interval) => {}
+            }
+
+            if let Ok(resp) = self.client.get(manifest_url).send().await
+                && let Ok(text) = resp.text().await
+                && let Ok(updated) = Self::parse_manifest(&text, manifest_url)
+            {
+                current_manifest = updated;
+            }
+        }
+
+        while let Some(res) = join_set.join_next().await {
+            if let Ok(Ok(chunk)) = res {
+                let _ = tx.send(Ok(chunk)).await;
+            }
+        }
+
+        drop(tx);
+        let flushed_bytes = flusher_handle
+            .await
+            .map_err(|e| EngineError::ConcurrencyError(e.to_string()))??;
+
+        Ok(flushed_bytes)
+    }
+
+    /// Stream all segments directly into an mpsc sender (for real-time on-the-fly muxing).
+    pub async fn stream_to_channel(
+        &self,
+        manifest_url: &str,
+        tx: mpsc::Sender<Result<SequencedChunk, EngineError>>,
+        cancel_token: CancellationToken,
+    ) -> Result<(), EngineError> {
+        let resp =
+            self.client.get(manifest_url).send().await.map_err(|e| {
+                EngineError::Network(format!("Failed to fetch DASH manifest: {}", e))
+            })?;
+        let text = resp.text().await.map_err(|e| {
+            EngineError::Network(format!("Failed to read DASH manifest text: {}", e))
+        })?;
+
+        let manifest = Self::parse_manifest(&text, manifest_url)?;
+        let mut next_idx = 0usize;
+
+        // If initialization segment present, send it as index 0
+        if let Some(ref init_url) = manifest.init_url {
+            let init_bytes = self
+                .client
+                .get(init_url)
+                .send()
+                .await
+                .map_err(|e| EngineError::Network(format!("Init fetch failed: {}", e)))?
+                .bytes()
+                .await
+                .map_err(|e| EngineError::Network(format!("Init read failed: {}", e)))?;
+            if tx
+                .send(Ok(SequencedChunk {
+                    index: next_idx,
+                    data: init_bytes,
+                }))
+                .await
+                .is_err()
+            {
+                return Ok(());
+            }
+            next_idx += 1;
+        }
+
+        let semaphore = Arc::new(Semaphore::new(self.concurrency));
+        let mut join_set = JoinSet::new();
+
+        for seg in manifest.media_segments {
+            let permit =
+                semaphore.clone().acquire_owned().await.map_err(|e| {
+                    EngineError::ConcurrencyError(format!("Semaphore failed: {}", e))
+                })?;
+            let client = self.client.clone();
+            let token = cancel_token.clone();
+            let mapped_index = next_idx + seg.index;
+
+            join_set.spawn(async move {
+                let _permit = permit;
+                if token.is_cancelled() {
+                    return Err(EngineError::Cancelled);
+                }
+
+                let bytes = client
+                    .get(&seg.url)
+                    .send()
+                    .await
+                    .map_err(|e| EngineError::Network(format!("Segment fetch failed: {}", e)))?
+                    .bytes()
+                    .await
+                    .map_err(|e| EngineError::Network(format!("Segment read failed: {}", e)))?;
+
+                Ok(SequencedChunk {
+                    index: mapped_index,
+                    data: bytes,
+                })
+            });
+        }
+
+        while let Some(res) = join_set.join_next().await {
+            let chunk_res = res.map_err(|e| EngineError::Network(e.to_string()))?;
+            if tx.send(chunk_res).await.is_err() {
+                break;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -454,5 +722,24 @@ mod tests {
             parsed.media_segments[44].url,
             "https://cdn.example.com/dash/chunk-00054.m4s"
         );
+    }
+
+    #[test]
+    fn test_parse_dynamic_dash_manifest() {
+        let manifest = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" minimumUpdatePeriod="PT2S">
+            <BaseURL>https://cdn.example.com/live/</BaseURL>
+            <SegmentTemplate initialization="init.mp4" media="chunk-$Number$.m4s" startNumber="100">
+                <SegmentTimeline>
+                    <S t="0" d="1000"/>
+                    <S t="1000" d="1000"/>
+                </SegmentTimeline>
+            </SegmentTemplate>
+        </MPD>"#;
+
+        let parsed =
+            DashDownloader::parse_manifest(manifest, "https://example.com/live.mpd").unwrap();
+        assert!(parsed.is_dynamic);
+        assert_eq!(parsed.min_update_period, Some(2.0));
+        assert_eq!(parsed.media_segments.len(), 2);
     }
 }

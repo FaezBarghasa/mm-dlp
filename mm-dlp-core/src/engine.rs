@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{DownloadConfig, DownloadResult, EngineConfig, MediaMetadata};
 pub use crate::downloader::dash::DashDownloader;
 pub use crate::downloader::hls::HlsDownloader;
+use crate::downloader::parallel::SequencedChunk;
 pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
 use crate::downloader::{build_http_client, fetch_with_fallback, stream_to_file};
 use crate::error::EngineError;
@@ -16,7 +17,8 @@ use crate::extractor::PlatformRegistry;
 use crate::extractor::format_selector::{FormatSelector, SelectedFormat};
 use crate::extractor::traits::MediaFormat;
 use crate::processor::{
-    download_cover_art, extract_audio_from_file, mux_streams_to_file, tag_file_in_place,
+    download_cover_art, extract_audio_from_file, mux_streams_piped, mux_streams_to_file,
+    tag_file_in_place,
 };
 use crate::resolver::SourceResolver;
 use crate::utils::{
@@ -36,6 +38,7 @@ pub struct MediaDownloadOptions {
     pub write_thumbnail: bool,
     pub embed_thumbnail: bool,
     pub embed_metadata: bool,
+    pub loudness_norm: bool,
 }
 
 impl Default for MediaDownloadOptions {
@@ -51,6 +54,7 @@ impl Default for MediaDownloadOptions {
             write_thumbnail: false,
             embed_thumbnail: false,
             embed_metadata: true,
+            loudness_norm: false,
         }
     }
 }
@@ -302,7 +306,13 @@ impl MmDlpEngine {
         let callback_run = callback.clone();
         let run_dl = async {
             let clean_url = sanitize_url(&raw_url)?;
-            let output_dir_path = validate_output_path(&options.output_dir)?;
+            let is_stdout = options.output_template == "-" || options.output_dir == "-";
+
+            let output_dir_path = if is_stdout {
+                std::env::temp_dir()
+            } else {
+                validate_output_path(&options.output_dir)?
+            };
 
             if clean_url.starts_with("magnet:") || clean_url.ends_with(".torrent") {
                 let session_dir = output_dir_path.join(".mm-dlp-session");
@@ -331,68 +341,110 @@ impl MmDlpEngine {
                 selected.primary_ext()
             };
 
-            let target_filename = expand_output_template(
-                &options.output_template,
-                &info.id,
-                &info.title,
-                info.uploader.as_deref(),
-                ext,
-            );
-
-            let raw_target_path = output_dir_path.join(&target_filename);
-            let final_target_path = resolve_duplicate_path(&raw_target_path);
+            let final_target_path = if is_stdout {
+                Path::new("-").to_path_buf()
+            } else {
+                let target_filename = expand_output_template(
+                    &options.output_template,
+                    &info.id,
+                    &info.title,
+                    info.uploader.as_deref(),
+                    ext,
+                );
+                let raw_target_path = output_dir_path.join(&target_filename);
+                resolve_duplicate_path(&raw_target_path)
+            };
 
             let mut total_bytes = 0u64;
 
             match selected {
                 SelectedFormat::Merged { video, audio } => {
-                    let tmp_video =
-                        output_dir_path.join(format!("{}.tmp.v.{}", info.id, video.ext));
-                    let tmp_audio =
-                        output_dir_path.join(format!("{}.tmp.a.{}", info.id, audio.ext));
-
                     callback_run.on_status(format!(
-                        "Downloading video stream [{}] ({}x{})",
-                        video.format_id,
-                        video.width.unwrap_or(0),
-                        video.height.unwrap_or(0)
+                        "Piping concurrent video [{}] and audio [{}] via FFmpeg muxer",
+                        video.format_id, audio.format_id
                     ));
-                    let v_bytes = self
-                        .download_format_stream(
-                            video,
-                            &tmp_video,
-                            options.concurrent_fragments,
-                            cancel_token.clone(),
-                        )
-                        .await?;
-                    total_bytes += v_bytes;
 
-                    callback_run.on_status(format!(
-                        "Downloading audio stream [{}] ({:.0} kbps)",
-                        audio.format_id,
-                        audio.tbr.unwrap_or(0.0)
-                    ));
-                    let a_bytes = self
-                        .download_format_stream(
-                            audio,
-                            &tmp_audio,
-                            options.concurrent_fragments,
-                            cancel_token.clone(),
-                        )
-                        .await?;
-                    total_bytes += a_bytes;
+                    // Use on-the-fly piped muxing (zero disk files for stdout, 50% less I/O for disk)
+                    let (v_tx, v_rx) =
+                        tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
+                    let (a_tx, a_rx) =
+                        tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
 
-                    callback_run.on_status("Muxing video and audio streams with ffmpeg".into());
-                    if let Err(e) =
-                        mux_streams_to_file(&tmp_video, &tmp_audio, &final_target_path).await
-                    {
-                        let _ = tokio::fs::remove_file(&tmp_video).await;
-                        let _ = tokio::fs::remove_file(&tmp_audio).await;
-                        return Err(e);
+                    let v_fut = self.stream_format_to_channel(
+                        video,
+                        v_tx,
+                        options.concurrent_fragments,
+                        cancel_token.clone(),
+                    );
+                    let a_fut = self.stream_format_to_channel(
+                        audio,
+                        a_tx,
+                        options.concurrent_fragments,
+                        cancel_token.clone(),
+                    );
+                    let mux_fut = mux_streams_piped(
+                        v_rx,
+                        a_rx,
+                        &final_target_path,
+                        &video.ext,
+                        &audio.ext,
+                        cancel_token.clone(),
+                    );
+
+                    let (v_res, a_res, mux_res) = tokio::join!(v_fut, a_fut, mux_fut);
+
+                    match mux_res {
+                        Ok(bytes) => {
+                            let _ = v_res;
+                            let _ = a_res;
+                            total_bytes += bytes;
+                        }
+                        Err(mux_err) => {
+                            if is_stdout {
+                                return Err(mux_err);
+                            }
+                            // Fallback to sequential disk download & mux if piped muxing fails
+                            callback_run.on_status(
+                                "Piped muxing fallback to sequential disk muxing".into(),
+                            );
+                            let tmp_video =
+                                output_dir_path.join(format!("{}.tmp.v.{}", info.id, video.ext));
+                            let tmp_audio =
+                                output_dir_path.join(format!("{}.tmp.a.{}", info.id, audio.ext));
+
+                            let v_bytes = self
+                                .download_format_stream(
+                                    video,
+                                    &tmp_video,
+                                    options.concurrent_fragments,
+                                    cancel_token.clone(),
+                                )
+                                .await?;
+                            total_bytes += v_bytes;
+
+                            let a_bytes = self
+                                .download_format_stream(
+                                    audio,
+                                    &tmp_audio,
+                                    options.concurrent_fragments,
+                                    cancel_token.clone(),
+                                )
+                                .await?;
+                            total_bytes += a_bytes;
+
+                            if let Err(e) =
+                                mux_streams_to_file(&tmp_video, &tmp_audio, &final_target_path)
+                                    .await
+                            {
+                                let _ = tokio::fs::remove_file(&tmp_video).await;
+                                let _ = tokio::fs::remove_file(&tmp_audio).await;
+                                return Err(e);
+                            }
+
+                            let _ = tokio::fs::remove_file(&tmp_video).await;
+                            let _ = tokio::fs::remove_file(&tmp_audio).await;
+                        }
                     }
-
-                    let _ = tokio::fs::remove_file(&tmp_video).await;
-                    let _ = tokio::fs::remove_file(&tmp_audio).await;
                 }
                 SelectedFormat::Single(format) => {
                     callback_run.on_status(format!(
@@ -422,6 +474,7 @@ impl MmDlpEngine {
                             &final_target_path,
                             &options.audio_format,
                             &options.audio_quality,
+                            options.loudness_norm,
                         )
                         .await
                         {
@@ -443,7 +496,8 @@ impl MmDlpEngine {
                 }
             }
 
-            if options.write_thumbnail
+            if !is_stdout
+                && options.write_thumbnail
                 && let Some(ref thumb_url) = info.thumbnail
             {
                 callback_run.on_status("Writing thumbnail image".into());
@@ -455,7 +509,8 @@ impl MmDlpEngine {
                 }
             }
 
-            if options.embed_metadata
+            if !is_stdout
+                && options.embed_metadata
                 && let Some(ref art_url) = info.thumbnail
             {
                 let cover_art = download_cover_art(&self.client, art_url).await;
@@ -494,6 +549,49 @@ impl MmDlpEngine {
         }
 
         result
+    }
+
+    /// Stream a media format chunks directly into an async mpsc sender (for piped on-the-fly muxing).
+    pub async fn stream_format_to_channel(
+        &self,
+        format: &MediaFormat,
+        tx: tokio::sync::mpsc::Sender<Result<SequencedChunk, EngineError>>,
+        concurrency: usize,
+        cancel_token: CancellationToken,
+    ) -> Result<(), EngineError> {
+        if format.protocol.as_deref() == Some("m3u8_native") || format.url.contains(".m3u8") {
+            let hls = HlsDownloader::new(self.client.clone(), concurrency);
+            hls.stream_to_channel(&format.url, tx, cancel_token).await
+        } else if format.protocol.as_deref() == Some("http_dash_segments")
+            || format.url.contains(".mpd")
+        {
+            let dash = DashDownloader::new(self.client.clone(), concurrency);
+            dash.stream_to_channel(&format.url, tx, cancel_token).await
+        } else {
+            let mut resp = fetch_with_fallback(&self.client, &format.url).await?;
+            let mut idx = 0usize;
+            while let Some(chunk) = resp
+                .chunk()
+                .await
+                .map_err(|e| EngineError::Network(e.to_string()))?
+            {
+                if cancel_token.is_cancelled() {
+                    return Err(EngineError::Cancelled);
+                }
+                if tx
+                    .send(Ok(SequencedChunk {
+                        index: idx,
+                        data: chunk,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                idx += 1;
+            }
+            Ok(())
+        }
     }
 
     async fn download_format_stream(
