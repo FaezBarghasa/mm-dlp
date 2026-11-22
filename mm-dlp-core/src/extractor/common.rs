@@ -1,6 +1,7 @@
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Traverse a JSON value using path segments (strings for keys, numbers for indices).
 /// Equivalent to yt-dlp's `traverse_obj(obj, path)`
@@ -59,10 +60,13 @@ pub fn traverse_u64(obj: &Value, path: &[&str]) -> Option<u64> {
     })
 }
 
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<[^>]+>").expect("Invalid tag regex")
+});
+
 /// Strip HTML tags and entities, similar to yt-dlp `clean_html`.
 pub fn clean_html(html: &str) -> String {
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
-    let stripped = tag_re.replace_all(html, "");
+    let stripped = TAG_RE.replace_all(html, "");
     stripped
         .replace("&amp;", "&")
         .replace("&lt;", "<")

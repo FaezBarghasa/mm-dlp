@@ -152,8 +152,8 @@ impl MmDlpEngine {
         raw_url: &str,
     ) -> Result<crate::extractor::traits::MediaInfo, EngineError> {
         let clean_url = sanitize_url(raw_url)?;
-        let extractor =
-            crate::extractor::registry::route_url_with_fallback(&clean_url).ok_or_else(|| {
+        let extractor = crate::extractor::registry::route_url_with_fallback(&clean_url)
+            .ok_or_else(|| {
                 EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
             })?;
         extractor.extract_metadata(&self.client, &clean_url).await

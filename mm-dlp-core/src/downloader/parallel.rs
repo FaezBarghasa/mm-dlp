@@ -43,7 +43,10 @@ pub async fn download_segments(
     let mut join_set = JoinSet::new();
 
     for segment in segments {
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => break,
+        };
         let client_clone = client.clone();
         let tx_clone = tx.clone();
 

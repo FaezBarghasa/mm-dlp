@@ -3,7 +3,8 @@ use regex::Regex;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+use tokio::sync::RwLock;
 
 use super::PlatformExtractor;
 use super::common::{clean_html, determine_ext, traverse_obj, traverse_string};
@@ -11,6 +12,14 @@ use super::traits::{AsyncExtractor, MediaFormat, MediaInfo, Subtitle};
 use crate::config::{MediaMetadata, StreamCandidate};
 use crate::error::EngineError;
 use crate::js::decipher::JsDecipher;
+
+static PLAYER_JS_CACHE: LazyLock<Arc<RwLock<Option<String>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+static JS_URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?:/s/player/[a-zA-Z0-9_-]+/player_ias\.vflset/[a-zA-Z0-9_-]+/base\.js|/s/player/[^"]+/base\.js)"#)
+        .expect("Invalid base.js URL regex")
+});
 
 static YOUTUBE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:https?://)?(?:(?:www|m)\.)?(?:youtube\.com/(?:watch\?.*?v=|embed/|v/|shorts/|live/)|youtu\.be/)([a-zA-Z0-9_-]{11})")
@@ -236,7 +245,53 @@ impl YouTubeExtractor {
         formats
     }
 
-    pub fn parse_media_info(&self, json: &Value, video_id: &str) -> Result<MediaInfo, EngineError> {
+    pub async fn fetch_player_js(&self, client: &Client, video_id: &str) -> Option<String> {
+        {
+            let cache = PLAYER_JS_CACHE.read().await;
+            if let Some(ref js) = *cache {
+                return Some(js.clone());
+            }
+        }
+
+        // Fetch watch page to locate base.js
+        let watch_url = format!("https://www.youtube.com/watch?v={}", video_id);
+        let page_html = client
+            .get(&watch_url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
+
+        let js_path = JS_URL_REGEX.find(&page_html)?.as_str();
+        let full_js_url = if js_path.starts_with("http") {
+            js_path.to_string()
+        } else {
+            format!("https://www.youtube.com{}", js_path)
+        };
+
+        let js_code = client
+            .get(&full_js_url)
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
+
+        let mut cache = PLAYER_JS_CACHE.write().await;
+        *cache = Some(js_code.clone());
+        Some(js_code)
+    }
+
+    pub fn parse_media_info_with_js(
+        &self,
+        json: &Value,
+        video_id: &str,
+        js_code: Option<&str>,
+    ) -> Result<MediaInfo, EngineError> {
         let video_details = &json["videoDetails"];
         if !video_details.is_object() {
             let reason = traverse_string(json, &["playabilityStatus", "reason"])
@@ -260,7 +315,13 @@ impl YouTubeExtractor {
             .and_then(|t| t["url"].as_str())
             .map(String::from);
 
-        let formats = self.parse_formats(&json["streamingData"], None);
+        let decipherer = JsDecipher::new().ok();
+        let decipher_param = match (decipherer.as_ref(), js_code) {
+            (Some(d), Some(js)) => Some((d, js)),
+            _ => None,
+        };
+
+        let formats = self.parse_formats(&json["streamingData"], decipher_param);
 
         let mut subtitles: HashMap<String, Vec<Subtitle>> = HashMap::new();
         if let Some(caption_tracks) = traverse_obj(
@@ -305,6 +366,10 @@ impl YouTubeExtractor {
             },
         })
     }
+
+    pub fn parse_media_info(&self, json: &Value, video_id: &str) -> Result<MediaInfo, EngineError> {
+        self.parse_media_info_with_js(json, video_id, None)
+    }
 }
 
 impl Default for YouTubeExtractor {
@@ -328,7 +393,24 @@ impl AsyncExtractor for YouTubeExtractor {
             .ok_or_else(|| EngineError::UnsupportedUrl(format!("Invalid YouTube URL: {}", url)))?;
 
         let json = self.fetch_player_response(client, &video_id).await?;
-        self.parse_media_info(&json, &video_id)
+
+        // Check if any formats require cipher deciphering
+        let has_ciphers = json["streamingData"]["adaptiveFormats"]
+            .as_array()
+            .map(|arr| {
+                arr.iter().any(|item| {
+                    item["signatureCipher"].is_string() || item["cipher"].is_string()
+                })
+            })
+            .unwrap_or(false);
+
+        let js_code = if has_ciphers {
+            self.fetch_player_js(client, &video_id).await
+        } else {
+            None
+        };
+
+        self.parse_media_info_with_js(&json, &video_id, js_code.as_deref())
     }
 }
 
@@ -453,7 +535,29 @@ impl PlatformExtractor for YouTubeExtractor {
         track_id: &str,
     ) -> Result<StreamCandidate, EngineError> {
         let json = self.fetch_player_response(client, track_id).await?;
-        let formats = self.parse_formats(&json["streamingData"], None);
+
+        let has_ciphers = json["streamingData"]["adaptiveFormats"]
+            .as_array()
+            .map(|arr| {
+                arr.iter().any(|item| {
+                    item["signatureCipher"].is_string() || item["cipher"].is_string()
+                })
+            })
+            .unwrap_or(false);
+
+        let js_code = if has_ciphers {
+            self.fetch_player_js(client, track_id).await
+        } else {
+            None
+        };
+
+        let decipherer = JsDecipher::new().ok();
+        let decipher_param = match (decipherer.as_ref(), js_code.as_deref()) {
+            (Some(d), Some(js)) => Some((d, js)),
+            _ => None,
+        };
+
+        let formats = self.parse_formats(&json["streamingData"], decipher_param);
 
         let best_audio = formats
             .iter()

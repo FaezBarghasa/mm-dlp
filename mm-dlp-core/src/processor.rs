@@ -136,7 +136,9 @@ pub fn tag_file_in_place(
         Some(t) => t,
         None => {
             tagged_file.insert_tag(Tag::new(tag_type));
-            tagged_file.primary_tag_mut().unwrap()
+            tagged_file
+                .primary_tag_mut()
+                .ok_or_else(|| EngineError::TaggingError("Failed to access primary tag".into()))?
         }
     };
 
@@ -181,10 +183,45 @@ pub async fn mux_streams_to_file(
         .arg("-i")
         .arg(audio_path)
         .arg("-c:v")
-        .arg("copy")
-        .arg("-c:a")
-        .arg("aac")
-        .arg(output_path);
+        .arg("copy");
+
+    let out_ext = output_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let audio_ext = audio_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match out_ext.as_str() {
+        "webm" => {
+            if audio_ext == "webm" || audio_ext == "opus" {
+                cmd.arg("-c:a").arg("copy");
+            } else {
+                cmd.arg("-c:a").arg("libopus");
+            }
+        }
+        "mp4" | "m4v" | "m4a" => {
+            if audio_ext == "m4a" || audio_ext == "aac" {
+                cmd.arg("-c:a").arg("copy");
+            } else {
+                cmd.arg("-c:a").arg("aac");
+            }
+        }
+        "mkv" => {
+            cmd.arg("-c:a").arg("copy");
+        }
+        _ => {
+            // General fallback: try copy first, ffmpeg will transcode if impossible
+            cmd.arg("-c:a").arg("copy");
+        }
+    }
+
+    cmd.arg(output_path);
 
     let status = cmd
         .status()

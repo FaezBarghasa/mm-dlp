@@ -1,13 +1,14 @@
 use bytes::Bytes;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use super::flusher::SequentialFlusher;
+use super::parallel::SequencedChunk;
 use crate::error::EngineError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -179,6 +180,18 @@ impl HlsDownloader {
             ));
         }
 
+        let buffer_capacity = (self.concurrency * 2).max(16);
+        let (tx, rx) = mpsc::channel(buffer_capacity);
+        let key_cache: Arc<RwLock<HashMap<String, Bytes>>> = Arc::new(RwLock::new(HashMap::new()));
+        let dest_path_buf = dest_path.to_path_buf();
+
+        let flusher_handle = tokio::spawn(async move {
+            let flusher = SequentialFlusher::new();
+            flusher
+                .flush_to_disk(dest_path_buf, rx, total_segments)
+                .await
+        });
+
         let semaphore = Arc::new(Semaphore::new(self.concurrency));
         let mut join_set = JoinSet::new();
 
@@ -188,6 +201,7 @@ impl HlsDownloader {
             })?;
             let client = self.client.clone();
             let token = cancel_token.clone();
+            let cache = key_cache.clone();
 
             join_set.spawn(async move {
                 let _permit = permit;
@@ -204,21 +218,30 @@ impl HlsDownloader {
                     .await
                     .map_err(|e| EngineError::Network(format!("Segment read failed: {}", e)))?;
 
-                // If segment has encryption key, decrypt it
+                // If segment has encryption key, decrypt it using cached key if available
                 let data = if let Some(ref key_info) = seg.key {
                     if key_info.method == "AES-128" {
-                        let key_bytes = client
-                            .get(&key_info.uri)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                EngineError::Network(format!("HLS key fetch failed: {}", e))
-                            })?
-                            .bytes()
-                            .await
-                            .map_err(|e| {
-                                EngineError::Network(format!("HLS key read failed: {}", e))
-                            })?;
+                        let key_bytes = {
+                            let cached = cache.read().await.get(&key_info.uri).cloned();
+                            if let Some(k) = cached {
+                                k
+                            } else {
+                                let fetched = client
+                                    .get(&key_info.uri)
+                                    .send()
+                                    .await
+                                    .map_err(|e| {
+                                        EngineError::Network(format!("HLS key fetch failed: {}", e))
+                                    })?
+                                    .bytes()
+                                    .await
+                                    .map_err(|e| {
+                                        EngineError::Network(format!("HLS key read failed: {}", e))
+                                    })?;
+                                cache.write().await.insert(key_info.uri.clone(), fetched.clone());
+                                fetched
+                            }
+                        };
 
                         let iv = key_info
                             .iv
@@ -233,33 +256,38 @@ impl HlsDownloader {
                     bytes
                 };
 
-                Ok((seg.index, data))
+                Ok(SequencedChunk {
+                    index: seg.index,
+                    data,
+                })
             });
         }
 
-        // Collect and sequence segments in memory or buffer
-        let mut chunks: Vec<Option<Bytes>> = vec![None; total_segments];
         let mut completed_count = 0;
-
         while let Some(res) = join_set.join_next().await {
-            let (idx, data) = res.map_err(|e| EngineError::Network(e.to_string()))??;
-            chunks[idx] = Some(data);
-            completed_count += 1;
-            if let Some(ref cb) = progress {
-                cb(completed_count, total_segments);
+            let chunk_res = res.map_err(|e| EngineError::Network(e.to_string()))?;
+            match chunk_res {
+                Ok(chunk) => {
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        return Err(EngineError::IoError("Flusher receiver dropped".into()));
+                    }
+                    completed_count += 1;
+                    if let Some(ref cb) = progress {
+                        cb(completed_count, total_segments);
+                    }
+                }
+                Err(err) => {
+                    let _ = tx.send(Err(err.clone())).await;
+                    return Err(err);
+                }
             }
         }
 
-        // Flush sequenced segments to destination file
-        let mut file = File::create(dest_path).await?;
-        let mut total_bytes = 0u64;
+        drop(tx);
+        let total_bytes = flusher_handle
+            .await
+            .map_err(|e| EngineError::ConcurrencyError(e.to_string()))??;
 
-        for bytes in chunks.into_iter().flatten() {
-            total_bytes += bytes.len() as u64;
-            file.write_all(&bytes).await?;
-        }
-
-        file.flush().await?;
         Ok(total_bytes)
     }
 }

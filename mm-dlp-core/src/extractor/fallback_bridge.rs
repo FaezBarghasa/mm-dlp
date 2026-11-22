@@ -210,13 +210,33 @@ impl AsyncExtractor for FallbackBridgeExtractor {
         _client: &Client,
         url: &str,
     ) -> Result<MediaInfo, EngineError> {
+        // Prevent recursive fork-bomb loop if mm-dlp is aliased or installed as yt-dlp
+        if std::env::var("MM_DLP_FALLBACK_ACTIVE").is_ok() {
+            return Err(EngineError::ExtractorError(
+                "Recursive fallback bridge invocation detected".into(),
+            ));
+        }
+
         let mut cmd = Command::new(&self.python_bin);
+        cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
+
+        let current_exe = std::env::current_exe().ok();
 
         if let Some(ref root) = self.yt_dlp_root {
             cmd.env("PYTHONPATH", root);
             cmd.arg("-m").arg("yt_dlp");
         } else if let Ok(system_ytdlp) = which::which("yt-dlp") {
-            cmd = Command::new(system_ytdlp);
+            // Guarantee system_ytdlp is not pointing back to mm-dlp binary
+            if let Some(ref curr) = current_exe
+                && let (Ok(c1), Ok(c2)) = (std::fs::canonicalize(system_ytdlp.as_path()), std::fs::canonicalize(curr))
+                && c1 == c2
+            {
+                // Self-binary collision detected; run python -m yt_dlp instead
+                cmd.arg("-m").arg("yt_dlp");
+            } else {
+                cmd = Command::new(system_ytdlp);
+                cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
+            }
         } else {
             cmd.arg("-m").arg("yt_dlp");
         }
