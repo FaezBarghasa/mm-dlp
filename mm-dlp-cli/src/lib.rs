@@ -540,7 +540,7 @@ async fn handle_torrent(
         return Ok(());
     }
 
-    let callback = Box::new(CliProgressCallback::new());
+    let callback = Box::new(CliProgressCallback::new(false));
     let task_id = format!(
         "torrent_{}",
         std::time::SystemTime::now()
