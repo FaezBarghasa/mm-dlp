@@ -59,8 +59,9 @@ chunk_98201.ts
 #EXTINF:2.000,
 chunk_98202.ts"#;
 
-    let parsed = HlsDownloader::parse_manifest(live_manifest, "https://live.example.com/stream.m3u8")
-        .expect("Failed to parse live HLS manifest");
+    let parsed =
+        HlsDownloader::parse_manifest(live_manifest, "https://live.example.com/stream.m3u8")
+            .expect("Failed to parse live HLS manifest");
 
     assert!(parsed.is_live, "Playlist should be marked live");
     assert_eq!(parsed.media_sequence, 98200);
@@ -80,8 +81,9 @@ fn test_dash_dynamic_manifest_detection() {
         </SegmentTemplate>
     </MPD>"#;
 
-    let parsed = DashDownloader::parse_manifest(dynamic_mpd, "https://live-dash.example.com/manifest.mpd")
-        .expect("Failed to parse dynamic DASH manifest");
+    let parsed =
+        DashDownloader::parse_manifest(dynamic_mpd, "https://live-dash.example.com/manifest.mpd")
+            .expect("Failed to parse dynamic DASH manifest");
 
     assert!(parsed.is_dynamic, "MPD should be identified as dynamic");
     assert_eq!(parsed.min_update_period, Some(1.5));
