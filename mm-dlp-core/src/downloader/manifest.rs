@@ -6,7 +6,10 @@ pub struct DownloadSegment {
     pub url: String,
 }
 
-pub fn parse_m3u8(manifest_content: &str, base_url: &str) -> Result<Vec<DownloadSegment>, EngineError> {
+pub fn parse_m3u8(
+    manifest_content: &str,
+    base_url: &str,
+) -> Result<Vec<DownloadSegment>, EngineError> {
     let mut segments = Vec::new();
     let mut index = 0;
 
@@ -19,7 +22,11 @@ pub fn parse_m3u8(manifest_content: &str, base_url: &str) -> Result<Vec<Download
         let url = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             trimmed.to_string()
         } else {
-            format!("{}/{}", base_url.trim_end_matches('/'), trimmed.trim_start_matches('/'))
+            format!(
+                "{}/{}",
+                base_url.trim_end_matches('/'),
+                trimmed.trim_start_matches('/')
+            )
         };
 
         segments.push(DownloadSegment { index, url });
@@ -29,7 +36,10 @@ pub fn parse_m3u8(manifest_content: &str, base_url: &str) -> Result<Vec<Download
     Ok(segments)
 }
 
-pub fn parse_dash(manifest_content: &str, base_url: &str) -> Result<Vec<DownloadSegment>, EngineError> {
+pub fn parse_dash(
+    manifest_content: &str,
+    base_url: &str,
+) -> Result<Vec<DownloadSegment>, EngineError> {
     let mut segments = Vec::new();
     let mut index = 0;
 
@@ -41,7 +51,11 @@ pub fn parse_dash(manifest_content: &str, base_url: &str) -> Result<Vec<Download
                 let url = if url_part.starts_with("http://") || url_part.starts_with("https://") {
                     url_part.to_string()
                 } else {
-                    format!("{}/{}", base_url.trim_end_matches('/'), url_part.trim_start_matches('/'))
+                    format!(
+                        "{}/{}",
+                        base_url.trim_end_matches('/'),
+                        url_part.trim_start_matches('/')
+                    )
                 };
 
                 segments.push(DownloadSegment { index, url });

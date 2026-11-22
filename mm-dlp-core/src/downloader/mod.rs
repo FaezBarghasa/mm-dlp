@@ -24,7 +24,7 @@ pub fn build_http_client() -> Result<Client, EngineError> {
 
 pub async fn fetch_with_fallback(client: &Client, url: &str) -> Result<Response, EngineError> {
     let quic_future = client.get(url).header("Alt-Svc", "h3=\":443\"").send();
-    
+
     match tokio::time::timeout(Duration::from_secs(10), quic_future).await {
         Ok(Ok(resp)) if resp.status().is_success() => Ok(resp),
         _ => {
@@ -50,7 +50,11 @@ pub async fn stream_to_file(
     let mut file = File::create(&tmp_path).await?;
     let mut downloaded_bytes: u64 = 0;
 
-    while let Some(chunk_res) = response.chunk().await.map_err(|e| EngineError::Network(e.to_string()))? {
+    while let Some(chunk_res) = response
+        .chunk()
+        .await
+        .map_err(|e| EngineError::Network(e.to_string()))?
+    {
         if cancel_token.is_cancelled() {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(EngineError::Cancelled);

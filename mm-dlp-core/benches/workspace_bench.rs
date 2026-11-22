@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use mm_dlp_core::config::EngineConfig;
 
 fn bench_engine_config_init(c: &mut Criterion) {

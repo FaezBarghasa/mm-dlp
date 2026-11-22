@@ -28,6 +28,13 @@ fn test_route_url_vimeo_valid() {
 }
 
 #[test]
+fn test_route_url_soundcloud_valid() {
+    let url = "https://soundcloud.com/artist/track-name";
+    let extractor = route_url(url).expect("Expected extractor for SoundCloud URL");
+    assert!(extractor.matches_url(url));
+}
+
+#[test]
 fn test_route_url_unknown_returns_none() {
     let url = "https://www.example.com/video/123";
     assert!(route_url(url).is_none(), "Unknown URLs should return None");
@@ -42,7 +49,7 @@ fn test_route_url_empty_returns_none() {
 
 #[test]
 fn test_parse_soundcloud_search_mock() {
-    use mm_dlp_core::extractor::traits::{TrackMetadata, AudioSource};
+    use mm_dlp_core::extractor::traits::{AudioSource, TrackMetadata};
     use serde_json::json;
 
     let mock_response = json!({
@@ -78,7 +85,6 @@ fn test_parse_soundcloud_search_mock() {
 
 #[test]
 fn test_parse_youtube_stream_info_mock() {
-    use mm_dlp_core::extractor::traits::{StreamInfo, TrackMetadata, AudioSource};
     use serde_json::json;
 
     let mock_player = json!({
@@ -125,14 +131,18 @@ fn test_parse_youtube_stream_info_mock() {
             match (a_opus, b_opus) {
                 (true, false) => std::cmp::Ordering::Greater,
                 (false, true) => std::cmp::Ordering::Less,
-                _ => a["bitrate"].as_u64().unwrap_or(0)
+                _ => a["bitrate"]
+                    .as_u64()
+                    .unwrap_or(0)
                     .cmp(&b["bitrate"].as_u64().unwrap_or(0)),
             }
         })
         .unwrap();
 
-    assert!(best["mimeType"].as_str().unwrap().contains("opus"),
-        "Expected Opus to be selected as the best audio format");
+    assert!(
+        best["mimeType"].as_str().unwrap().contains("opus"),
+        "Expected Opus to be selected as the best audio format"
+    );
     assert_eq!(best["bitrate"].as_u64().unwrap(), 160000);
 }
 
@@ -141,26 +151,31 @@ fn test_parse_youtube_stream_info_mock() {
 #[tokio::test]
 #[ignore = "requires network access"]
 async fn test_yt_stream_url_live() {
-    use mm_dlp_core::data::extractors::youtube::YouTubeMusicExtractor;
-    use mm_dlp_core::extractor::traits::{AudioPlatformExtractor, AudioQuality};
+    use mm_dlp_core::extractor::PlatformExtractor;
+    use mm_dlp_core::extractor::youtube::YouTubeExtractor;
+    use reqwest::Client;
 
-    let extractor = YouTubeMusicExtractor::new().expect("Failed to create YouTubeMusicExtractor");
-    // Rick Astley - "Never Gonna Give You Up" — a reliably public video
-    let result = extractor.get_stream_url("dQw4w9WgXcQ", AudioQuality::High).await;
+    let extractor = YouTubeExtractor::new();
+    let client = Client::new();
+    let result = extractor.get_stream_url(&client, "dQw4w9WgXcQ").await;
     assert!(result.is_ok(), "get_stream_url failed: {:?}", result.err());
     let info = result.unwrap();
-    assert!(!info.stream_url.is_empty());
-    assert!(info.bitrate > 0);
+    assert!(!info.url.is_empty());
 }
 
 #[tokio::test]
 #[ignore = "requires network access"]
 async fn test_soundcloud_search_live() {
-    use mm_dlp_core::data::extractors::soundcloud::SoundCloudExtractor;
-    use mm_dlp_core::extractor::traits::AudioPlatformExtractor;
+    use mm_dlp_core::extractor::PlatformExtractor;
+    use mm_dlp_core::extractor::soundcloud::SoundCloudExtractor;
+    use reqwest::Client;
 
-    let extractor = SoundCloudExtractor::new().await.expect("Failed to create SoundCloudExtractor");
-    let results = extractor.search("lofi hip hop").await;
+    let extractor = SoundCloudExtractor::new();
+    let client = Client::new();
+    let results = extractor.search(&client, "lofi hip hop").await;
     assert!(results.is_ok(), "Search failed: {:?}", results.err());
-    assert!(!results.unwrap().is_empty(), "Expected at least one search result");
+    assert!(
+        !results.unwrap().is_empty(),
+        "Expected at least one search result"
+    );
 }

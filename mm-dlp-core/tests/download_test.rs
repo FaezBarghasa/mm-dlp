@@ -74,7 +74,10 @@ seg2.ts
     let temp_path = std::env::temp_dir().join(format!("mm_dlp_test_{}.ts", id));
 
     let flusher = SequentialFlusher::new();
-    flusher.flush_to_disk(&temp_path, rx, 3).await.expect("Failed to flush to disk");
+    flusher
+        .flush_to_disk(&temp_path, rx, 3)
+        .await
+        .expect("Failed to flush to disk");
 
     let contents = fs::read_to_string(&temp_path).expect("Failed to read flushed file");
     assert_eq!(contents, "chunk0chunk1chunk2"); // Sequential assurance

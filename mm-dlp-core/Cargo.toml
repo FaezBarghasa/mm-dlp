@@ -32,11 +32,11 @@ async-trait = "0.1"
 regex = "1.10"
 libc = "0.2"
 memmap2 = "0.9"
-boring = "4.11.0"
-quiche = { version = "0.29.1", features = ["boring"] }
-rquickjs = { version = "0.12.0" }
+boring = "5.6.0"
+quiche = { version = "0.30.1", features = ["boring"] }
+rquickjs = { version = "0.14.0" }
 wasmer = "7.1.0"
-ffmpeg-next = "8.1.0"
+ffmpeg-next = "9.1.0"
 secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
 security-framework = "3.7.0"
 windows-sys = { version = "0.61.2", features = [
@@ -49,7 +49,7 @@ hex = "0.4"
 h2 = "0.4"
 lazy_static = "1.4.0"
 actix-web = "4"
-surrealdb = { version = "3.0.0-beta.1", default-features = false, features = [
+surrealdb = { version = "4.0.1", default-features = false, features = [
     "kv-mem",
     "kv-surrealkv",
 ] }
@@ -60,13 +60,13 @@ http = "1"
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
 rustls = "0.23.41"
-rcgen = "0.14.8"
+rcgen = "0.14.10"
 url = "2.5"
 tokio-util = { version = "0.7", features = ["io"] }
 rustls-native-certs = "0.8"
-lofty = "0.24"
+lofty = "0.25.5"
 which = "8.0.4"
-quick-xml = { version = "0.41.0", features = ["serde", "serialize"] }
+quick-xml = { version = "0.42.0", features = ["serde", "serialize"] }
 futures = "0.3"
 strsim = "0.11"
 

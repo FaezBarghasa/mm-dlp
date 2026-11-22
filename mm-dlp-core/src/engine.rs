@@ -1,12 +1,11 @@
 use reqwest::Client;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{DownloadConfig, DownloadResult, EngineConfig};
+use crate::config::{DownloadConfig, DownloadResult, EngineConfig, MediaMetadata};
 use crate::downloader::{build_http_client, fetch_with_fallback, stream_to_file};
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;
@@ -14,7 +13,6 @@ use crate::processor::{download_cover_art, tag_file_in_place};
 use crate::resolver::SourceResolver;
 use crate::utils::{resolve_duplicate_path, sanitize_filename, sanitize_url, validate_output_path};
 
-#[uniffi::export(callback_interface)]
 pub trait DownloadProgressCallback: Send + Sync {
     fn on_status(&self, status: String);
     fn on_progress(&self, progress_percentage: f64);
@@ -22,7 +20,6 @@ pub trait DownloadProgressCallback: Send + Sync {
     fn on_complete(&self, result: DownloadResult);
 }
 
-#[derive(uniffi::Object)]
 pub struct MmDlpEngine {
     config: EngineConfig,
     client: Client,
@@ -31,9 +28,7 @@ pub struct MmDlpEngine {
     active_tasks: RwLock<HashMap<String, CancellationToken>>,
 }
 
-#[uniffi::export]
 impl MmDlpEngine {
-    #[uniffi::constructor]
     pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
         let client = build_http_client()?;
         let registry = Arc::new(PlatformRegistry::new());
@@ -47,12 +42,50 @@ impl MmDlpEngine {
         })
     }
 
+    pub fn config(&self) -> &EngineConfig {
+        &self.config
+    }
+
+    pub async fn extract_metadata(&self, raw_url: String) -> Result<MediaMetadata, EngineError> {
+        let clean_url = sanitize_url(&raw_url)?;
+        let extractor = self.registry.route_url(&clean_url).ok_or_else(|| {
+            EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
+        })?;
+        extractor.extract_metadata(&self.client, &clean_url).await
+    }
+
+    pub async fn extract_info(
+        &self,
+        raw_url: &str,
+    ) -> Result<crate::extractor::traits::MediaInfo, EngineError> {
+        let clean_url = sanitize_url(raw_url)?;
+        let extractor = crate::extractor::registry::route_url(&clean_url).ok_or_else(|| {
+            EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
+        })?;
+        extractor.extract_metadata(&self.client, &clean_url).await
+    }
+
+    pub async fn search(
+        &self,
+        platform: &str,
+        query: &str,
+    ) -> Result<Vec<MediaMetadata>, EngineError> {
+        let extractor = self.registry.get_extractor(platform).ok_or_else(|| {
+            EngineError::UnsupportedUrl(format!("Unsupported platform: {}", platform))
+        })?;
+        extractor.search(&self.client, query).await
+    }
+
+    pub fn registry(&self) -> Arc<PlatformRegistry> {
+        self.registry.clone()
+    }
+
     pub async fn execute_download(
         &self,
         task_id: String,
         raw_url: String,
         download_config: DownloadConfig,
-        callback: Arc<dyn DownloadProgressCallback>,
+        callback: Box<dyn DownloadProgressCallback>,
     ) -> Result<DownloadResult, EngineError> {
         let start_time = Instant::now();
         let cancel_token = CancellationToken::new();
@@ -67,18 +100,23 @@ impl MmDlpEngine {
             let output_dir = validate_output_path(&download_config.output_dir)?;
 
             callback.on_status("Extracting metadata".to_string());
-            let extractor = self
-                .registry
-                .route_url(&clean_url)
-                .ok_or_else(|| EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url)))?;
+            let extractor = self.registry.route_url(&clean_url).ok_or_else(|| {
+                EngineError::UnsupportedUrl(format!("No extractor for URL: {}", clean_url))
+            })?;
 
             let metadata = extractor.extract_metadata(&self.client, &clean_url).await?;
 
             callback.on_status("Resolving audio stream".to_string());
-            let candidate = if extractor.get_stream_url(&self.client, &metadata.id).await.is_ok() {
+            let candidate = if extractor
+                .get_stream_url(&self.client, &metadata.id)
+                .await
+                .is_ok()
+            {
                 extractor.get_stream_url(&self.client, &metadata.id).await?
             } else {
-                self.resolver.resolve_best_stream(&self.client, &metadata).await?
+                self.resolver
+                    .resolve_best_stream(&self.client, &metadata)
+                    .await?
             };
 
             callback.on_status("Fetching audio stream".to_string());
@@ -90,7 +128,8 @@ impl MmDlpEngine {
             let final_target_path = resolve_duplicate_path(&raw_target_path);
 
             callback.on_status("Downloading stream".to_string());
-            let downloaded_bytes = stream_to_file(response, &final_target_path, cancel_token.clone()).await?;
+            let downloaded_bytes =
+                stream_to_file(response, &final_target_path, cancel_token.clone()).await?;
             callback.on_progress(100.0);
 
             if let Some(art_url) = &metadata.thumbnail_url {

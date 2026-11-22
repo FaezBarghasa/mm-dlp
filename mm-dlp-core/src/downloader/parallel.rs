@@ -1,9 +1,9 @@
-use crate::error::EngineError;
 use crate::downloader::manifest::DownloadSegment;
+use crate::error::EngineError;
 use bytes::Bytes;
 use reqwest::Client;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 
 #[derive(Debug, Clone)]
@@ -53,15 +53,21 @@ pub async fn download_segments(
 
             let result = match response {
                 Ok(resp) => match resp.bytes().await {
-                    Ok(bytes) => Ok(SequencedChunk { index: segment.index, data: bytes }),
+                    Ok(bytes) => Ok(SequencedChunk {
+                        index: segment.index,
+                        data: bytes,
+                    }),
                     Err(e) => Err(EngineError::IoError(format!("Failed to read body: {}", e))),
                 },
-                Err(e) => Err(EngineError::IoError(format!("Failed to download segment: {}", e))),
+                Err(e) => Err(EngineError::IoError(format!(
+                    "Failed to download segment: {}",
+                    e
+                ))),
             };
 
             let _ = tx_clone.send(result).await;
         });
     }
 
-    while let Some(_) = join_set.join_next().await {}
+    while join_set.join_next().await.is_some() {}
 }

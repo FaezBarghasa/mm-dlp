@@ -1,4 +1,4 @@
-use crate::client::EngineError;
+use crate::error::EngineError;
 use crate::js::engine::SandboxJsEngine;
 use regex::Regex;
 
@@ -16,40 +16,54 @@ impl JsDecipher {
         // Regex patterns to identify cipher swap/reverse blocks inside dynamically scrambled payloads.
         // Matches common obfuscated function signatures: `decipher = function(a) { var b=a.split(""); ... return b.join("") }`
         let main_func_regex = Regex::new(r#"(?x)
-            (?P<func_name>[a-zA-Z0-9$]+)\s*=\s*function\(\s*(?P<param>[a-zA-Z0-9$]+)\s*\)\s*\{
-                \s*(?P<param2>[a-zA-Z0-9$]+)=(?P=param)\.split\(""\);\s*
-                (?P<body>.+?)\s*
-                return\s+(?P=param2)\.join\(""\)
+            (?:var\s+)?(?P<func_name>[a-zA-Z0-9$]+)\s*=\s*function\(\s*(?P<param>[a-zA-Z0-9$]+)\s*\)\s*\{
+                \s*(?:var\s+)?(?P<param2>[a-zA-Z0-9$]+)\s*=\s*[a-zA-Z0-9$]+\.split\(""\);\s*
+                (?P<body>[\s\S]+?)\s*
+                return\s+[a-zA-Z0-9$]+\.join\(""\);?\s*
             \}
-        "#).map_err(|e| EngineError::OsApiError(e.to_string()))?;
+        "#).map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
 
         let captures = main_func_regex.captures(js_payload).ok_or_else(|| {
-            EngineError::OsApiError("Failed to find decipher function block in JS payload".to_string())
+            EngineError::StreamNotFound(
+                "Failed to find decipher function block in JS payload".to_string(),
+            )
         })?;
 
-        let func_name = captures.name("func_name").map(|m| m.as_str()).unwrap_or("decipherFn");
+        let func_name = captures
+            .name("func_name")
+            .map(|m| m.as_str())
+            .unwrap_or("decipherFn");
         let param = captures.name("param").map(|m| m.as_str()).unwrap_or("a");
         let param2 = captures.name("param2").map(|m| m.as_str()).unwrap_or("a");
         let body = captures.name("body").map(|m| m.as_str()).unwrap_or("");
 
         // Identify the localized helper object being used inside the body for reversing & swapping
         let helper_obj_regex = Regex::new(r#"([a-zA-Z0-9$]+)\.[a-zA-Z0-9$]+\("#)
-            .map_err(|e| EngineError::OsApiError(e.to_string()))?;
-            
+            .map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
+
         let helper_obj_name = if let Some(cap) = helper_obj_regex.captures(body) {
             cap.get(1).map(|m| m.as_str()).unwrap_or("helperObj")
         } else {
-            return Err(EngineError::OsApiError("Failed to find bound helper object in decipher function body".to_string()));
+            return Err(EngineError::StreamNotFound(
+                "Failed to find bound helper object in decipher function body".to_string(),
+            ));
         };
 
         // Extract helper object definitions
-        let obj_def_regex = Regex::new(&format!(r#"(?x)
-            var\s+{}=\{{
+        let obj_def_regex = Regex::new(&format!(
+            r#"(?x)
+            (?:var\s+)?{}\s*=\s*\{{
                 [\s\S]*?
-            \}};
-        "#, regex::escape(helper_obj_name))).map_err(|e| EngineError::OsApiError(e.to_string()))?;
+            \}};\s*
+        "#,
+            regex::escape(helper_obj_name)
+        ))
+        .map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
 
-        let obj_def = obj_def_regex.find(js_payload).map(|m| m.as_str()).unwrap_or(""); 
+        let obj_def = obj_def_regex
+            .find(js_payload)
+            .map(|m| m.as_str())
+            .unwrap_or("");
 
         // Reconstruct the script block containing strictly necessary cipher assets
         let compiled_script = format!(
@@ -58,6 +72,37 @@ impl JsDecipher {
         );
 
         // Load the isolated script chunks directly into our compiled QuickJS Sandbox runtime
-        self.engine.execute_decipher(&compiled_script, signature, func_name)
+        self.engine
+            .execute_decipher(&compiled_script, signature, func_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_js_decipher_mock() {
+        let mock_js = r#"
+            var helperObj = {
+                reverse: function(a) { a.reverse(); },
+                swap: function(a, b) { var c = a[0]; a[0] = a[b % a.length]; a[b % a.length] = c; },
+                splice: function(a, b) { a.splice(0, b); }
+            };
+            var decipherFn = function(a) {
+                var b = a.split("");
+                helperObj.reverse(b);
+                helperObj.swap(b, 2);
+                return b.join("");
+            };
+        "#;
+
+        let decipherer = JsDecipher::new().expect("Failed to initialize JsDecipher");
+        let result = decipherer
+            .decipher(mock_js, "abcdefg")
+            .expect("Decipher failed");
+        // "abcdefg" reversed is "gfedcba".
+        // swap b[0] and b[2]: 'g' and 'e' swapped -> "efgdcba"
+        assert_eq!(result, "efgdcba");
     }
 }

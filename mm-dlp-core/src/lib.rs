@@ -1,3 +1,4 @@
+#![allow(clippy::double_must_use)]
 //! # mm-dlp-core
 //!
 //! High-performance media extraction & downloading engine for Android via UniFFI.
@@ -9,6 +10,7 @@ pub mod downloader;
 pub mod engine;
 pub mod error;
 pub mod extractor;
+pub mod js;
 pub mod playlist;
 pub mod processor;
 pub mod resolver;

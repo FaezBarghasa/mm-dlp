@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use uniffi_mmdlp::data::playlist::json_handler;
 use uniffi_mmdlp::domain::playlist::{Playlist, Track};
 use uniffi_mmdlp::extractor::traits::AudioSource;
@@ -93,5 +93,9 @@ fn benchmark_playlist_json_parse(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_yt_json_parsing, benchmark_playlist_json_parse);
+criterion_group!(
+    benches,
+    benchmark_yt_json_parsing,
+    benchmark_playlist_json_parse
+);
 criterion_main!(benches);

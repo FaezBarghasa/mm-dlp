@@ -1,5 +1,5 @@
-use crate::error::EngineError;
 use crate::downloader::parallel::SequencedChunk;
+use crate::error::EngineError;
 use std::collections::BinaryHeap;
 use std::path::Path;
 use tokio::fs::File;
@@ -25,7 +25,9 @@ impl SequentialFlusher {
         mut rx: mpsc::Receiver<Result<SequencedChunk, EngineError>>,
         total_segments: usize,
     ) -> Result<(), EngineError> {
-        let file = File::create(path).await.map_err(|e| EngineError::IoError(e.to_string()))?;
+        let file = File::create(path)
+            .await
+            .map_err(|e| EngineError::IoError(e.to_string()))?;
         let mut writer = BufWriter::new(file);
 
         while self.next_expected_index < total_segments {
@@ -52,10 +54,15 @@ impl SequentialFlusher {
             }
         }
 
-        writer.flush().await.map_err(|e| EngineError::IoError(e.to_string()))?;
+        writer
+            .flush()
+            .await
+            .map_err(|e| EngineError::IoError(e.to_string()))?;
 
         if self.next_expected_index < total_segments {
-            Err(EngineError::IoError("Channel closed before all segments were received".into()))
+            Err(EngineError::IoError(
+                "Channel closed before all segments were received".into(),
+            ))
         } else {
             Ok(())
         }

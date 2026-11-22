@@ -7,10 +7,10 @@ fn test_io_error_conversion() {
     let engine_err: EngineError = io_err.into();
 
     match engine_err {
-        EngineError::Io(msg) => {
+        EngineError::IoError(msg) => {
             assert!(msg.contains("access denied"));
         }
-        _ => panic!("Expected EngineError::Io, got {:?}", engine_err),
+        _ => panic!("Expected EngineError::IoError, got {:?}", engine_err),
     }
 }
 
@@ -18,16 +18,15 @@ fn test_io_error_conversion() {
 fn test_serde_json_error_conversion() {
     let invalid_json = "{ \"bad\": json }";
     let result: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(invalid_json);
-    
+
     let serde_err = result.expect_err("Parsing invalid JSON should yield an error");
     let engine_err: EngineError = serde_err.into();
 
-    assert!(matches!(engine_err, EngineError::Parsing(_)));
+    assert!(matches!(engine_err, EngineError::Serialization(_)));
 }
 
 #[test]
 fn test_reqwest_error_conversion() {
-    // Forcibly generate a `reqwest::Error` by passing a structurally malformed URL to the builder
     let reqwest_err = reqwest::Client::new()
         .get("ht tp://invalid-url-schema")
         .build()

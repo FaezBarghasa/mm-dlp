@@ -10,8 +10,11 @@ static SPOTIFY_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)spotify\.com").expect("Invalid regex for spotify"));
 static SOUNDCLOUD_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)soundcloud\.com").expect("Invalid regex for soundcloud"));
-static YOUTUBE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(youtube\.com|youtu\.be)").expect("Invalid regex for youtube"));
+static YOUTUBE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(youtube\.com|youtu\.be)").expect("Invalid regex for youtube")
+});
+static VIMEO_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)vimeo\.com").expect("Invalid regex for vimeo"));
 
 /// Strips query params, fragments, and trailing slashes using the `url` crate.
 pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
@@ -27,7 +30,7 @@ pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
     Ok(clean_str)
 }
 
-/// Detects the platform (e.g. "spotify", "soundcloud", "youtube") from URL using `std::sync::LazyLock` regexes.
+/// Detects the platform (e.g. "spotify", "soundcloud", "youtube", "vimeo") from URL using `std::sync::LazyLock` regexes.
 pub fn detect_platform(raw_url: &str) -> Option<&'static str> {
     if SPOTIFY_REGEX.is_match(raw_url) {
         Some("spotify")
@@ -35,6 +38,8 @@ pub fn detect_platform(raw_url: &str) -> Option<&'static str> {
         Some("soundcloud")
     } else if YOUTUBE_REGEX.is_match(raw_url) {
         Some("youtube")
+    } else if VIMEO_REGEX.is_match(raw_url) {
+        Some("vimeo")
     } else {
         None
     }
@@ -82,10 +87,7 @@ pub fn resolve_duplicate_path(path: &Path) -> PathBuf {
     }
 
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("file");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let extension = path
         .extension()
         .and_then(|e| e.to_str())

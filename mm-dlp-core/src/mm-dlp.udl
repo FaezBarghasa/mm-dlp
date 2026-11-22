@@ -67,6 +67,9 @@ interface MmDlpEngine {
     constructor(EngineConfig config);
 
     [Async, Throws=EngineError]
+    MediaMetadata extract_metadata(string raw_url);
+
+    [Async, Throws=EngineError]
     DownloadResult execute_download(string task_id, string raw_url, DownloadConfig download_config, DownloadProgressCallback callback);
 
     [Async]

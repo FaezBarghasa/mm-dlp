@@ -29,10 +29,10 @@ impl ResolutionCache {
 
     pub async fn get(&self, key: &str) -> Option<StreamCandidate> {
         let cache = self.entries.read().await;
-        if let Some(entry) = cache.get(key) {
-            if entry.cached_at.elapsed() < self.ttl {
-                return Some(entry.candidate.clone());
-            }
+        if let Some(entry) = cache.get(key)
+            && entry.cached_at.elapsed() < self.ttl
+        {
+            return Some(entry.candidate.clone());
         }
         None
     }
@@ -63,8 +63,14 @@ impl SourceResolver {
     }
 
     pub fn calculate_match_score(target: &MediaMetadata, candidate: &MediaMetadata) -> f64 {
-        let title_sim = strsim::normalized_levenshtein(&target.title.to_lowercase(), &candidate.title.to_lowercase());
-        let artist_sim = strsim::normalized_levenshtein(&target.artist.to_lowercase(), &candidate.artist.to_lowercase());
+        let title_sim = strsim::normalized_levenshtein(
+            &target.title.to_lowercase(),
+            &candidate.title.to_lowercase(),
+        );
+        let artist_sim = strsim::normalized_levenshtein(
+            &target.artist.to_lowercase(),
+            &candidate.artist.to_lowercase(),
+        );
 
         let duration_score = if target.duration_seconds > 0 && candidate.duration_seconds > 0 {
             let diff = (target.duration_seconds as i64 - candidate.duration_seconds as i64).abs();

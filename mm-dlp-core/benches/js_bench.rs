@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use mm_dlp_core::js::engine::SandboxJsEngine;
 
 fn js_decipher_benchmark(c: &mut Criterion) {
     // Compiling the entire sandbox wrapper locally and initializing JS contexts.
     let engine = SandboxJsEngine::new().expect("Failed to initialize QuickJS SandboxJsEngine");
-    
+
     let script = r#"
         var cipher_helper = {
             reverse: function(a) { a.reverse(); },
@@ -19,13 +19,15 @@ fn js_decipher_benchmark(c: &mut Criterion) {
             return b.join("");
         };
     "#;
-    
+
     let argument = "0123456789abcdef";
     let target_fn = "decipher_signature";
-    
+
     c.bench_function("quickjs_decipher_execution", |b| {
         b.iter(|| {
-            let result = engine.execute_decipher(black_box(script), black_box(argument), black_box(target_fn)).unwrap();
+            let result = engine
+                .execute_decipher(black_box(script), black_box(argument), black_box(target_fn))
+                .unwrap();
             black_box(result);
         });
     });

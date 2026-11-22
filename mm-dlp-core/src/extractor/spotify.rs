@@ -22,22 +22,37 @@ impl Default for SpotifyExtractor {
 
 #[async_trait]
 impl PlatformExtractor for SpotifyExtractor {
-    async fn extract_metadata(&self, client: &Client, url: &str) -> Result<MediaMetadata, EngineError> {
-        let oembed_url = format!("https://open.spotify.com/oembed?url={}", urlencoding::encode(url));
+    async fn extract_metadata(
+        &self,
+        client: &Client,
+        url: &str,
+    ) -> Result<MediaMetadata, EngineError> {
+        let oembed_url = format!(
+            "https://open.spotify.com/oembed?url={}",
+            urlencoding::encode(url)
+        );
         let resp = client.get(&oembed_url).send().await?;
-        
-        let title_fallback;
-        let thumbnail_url;
-        if resp.status().is_success() {
-            let json: Value = resp.json().await.unwrap_or(Value::Null);
-            title_fallback = json["title"].as_str().unwrap_or("Unknown Title").to_string();
-            thumbnail_url = json["thumbnail_url"].as_str().map(String::from);
-        } else {
-            title_fallback = "Unknown Title".to_string();
-            thumbnail_url = None;
-        }
 
-        let page_html = client.get(url).send().await?.text().await.unwrap_or_default();
+        let (title_fallback, thumbnail_url) = if resp.status().is_success() {
+            let json: Value = resp.json().await.unwrap_or(Value::Null);
+            (
+                json["title"]
+                    .as_str()
+                    .unwrap_or("Unknown Title")
+                    .to_string(),
+                json["thumbnail_url"].as_str().map(String::from),
+            )
+        } else {
+            ("Unknown Title".to_string(), None)
+        };
+
+        let page_html = client
+            .get(url)
+            .send()
+            .await?
+            .text()
+            .await
+            .unwrap_or_default();
         let mut title = title_fallback;
         let mut artist = "Unknown Artist".to_string();
         let mut album = None;
@@ -67,9 +82,7 @@ impl PlatformExtractor for SpotifyExtractor {
                     }
                     if let Some(dur_str) = val["duration"].as_str() {
                         // Parses ISO 8601 duration string like PT3M15S
-                        let dur = dur_str
-                            .trim_start_matches("PT")
-                            .trim_end_matches('S');
+                        let dur = dur_str.trim_start_matches("PT").trim_end_matches('S');
                         if let Some((m, s)) = dur.split_once('M') {
                             let mins: u64 = m.parse().unwrap_or(0);
                             let secs: u64 = s.parse().unwrap_or(0);
@@ -98,15 +111,24 @@ impl PlatformExtractor for SpotifyExtractor {
         })
     }
 
-    async fn search(&self, _client: &Client, _query: &str) -> Result<Vec<MediaMetadata>, EngineError> {
+    async fn search(
+        &self,
+        _client: &Client,
+        _query: &str,
+    ) -> Result<Vec<MediaMetadata>, EngineError> {
         Err(EngineError::StreamNotFound(
             "Spotify search is not supported directly; Spotify is metadata-only.".to_string(),
         ))
     }
 
-    async fn get_stream_url(&self, _client: &Client, _track_id: &str) -> Result<StreamCandidate, EngineError> {
+    async fn get_stream_url(
+        &self,
+        _client: &Client,
+        _track_id: &str,
+    ) -> Result<StreamCandidate, EngineError> {
         Err(EngineError::StreamNotFound(
-            "Spotify tracks are DRM protected. Stream must be resolved from YouTube/SoundCloud.".to_string(),
+            "Spotify tracks are DRM protected. Stream must be resolved from YouTube/SoundCloud."
+                .to_string(),
         ))
     }
 }

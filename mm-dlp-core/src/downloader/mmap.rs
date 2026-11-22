@@ -31,11 +31,14 @@ impl MmapWriter {
     fn preallocate(file: &File, size: u64) -> Result<(), EngineError> {
         use std::os::unix::io::AsRawFd;
         let fd = file.as_raw_fd();
-        
+
         // Tell the OS to allocate contiguous file system blocks directly
         let ret = unsafe { libc::posix_fallocate(fd, 0, size as libc::off_t) };
         if ret != 0 {
-            return Err(EngineError::IoError(format!("posix_fallocate failed with code: {}", ret)));
+            return Err(EngineError::IoError(format!(
+                "posix_fallocate failed with code: {}",
+                ret
+            )));
         }
         Ok(())
     }
@@ -43,7 +46,9 @@ impl MmapWriter {
     #[cfg(target_family = "windows")]
     fn preallocate(file: &File, size: u64) -> Result<(), EngineError> {
         use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{FileAllocationInfo, SetFileInformationByHandle, FILE_ALLOCATION_INFO};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ALLOCATION_INFO, FileAllocationInfo, SetFileInformationByHandle,
+        };
 
         let handle = file.as_raw_handle() as isize;
         let mut info = FILE_ALLOCATION_INFO {
@@ -60,7 +65,9 @@ impl MmapWriter {
         };
 
         if success == 0 {
-            return Err(EngineError::IoError("SetFileInformationByHandle pre-allocation failed".into()));
+            return Err(EngineError::IoError(
+                "SetFileInformationByHandle pre-allocation failed".into(),
+            ));
         }
         Ok(())
     }
@@ -68,9 +75,11 @@ impl MmapWriter {
     pub fn write_at_offset(&mut self, offset: usize, data: &[u8]) -> Result<(), EngineError> {
         let end = offset + data.len();
         if end > self.mmap.len() {
-            return Err(EngineError::IoError("Memory-mapped write exceeds buffer boundaries".into()));
+            return Err(EngineError::IoError(
+                "Memory-mapped write exceeds buffer boundaries".into(),
+            ));
         }
-        
+
         self.mmap[offset..end].copy_from_slice(data);
         Ok(())
     }

@@ -1,7 +1,7 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
+use mm_dlp_core::data::playlist::{json_handler, xml_handler};
 use mm_dlp_core::domain::playlist::{Playlist, Track};
 use mm_dlp_core::extractor::traits::AudioSource;
-use mm_dlp_core::data::playlist::{json_handler, xml_handler};
 
 fn create_large_playlist(num_tracks: usize) -> Playlist {
     let tracks = (0..num_tracks)

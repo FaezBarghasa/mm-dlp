@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, AsyncBencher};
+use criterion::{AsyncBencher, Criterion, criterion_group, criterion_main};
 use mm_dlp_core::network::quic_client::QuicHttpClient;
 use reqwest::Client;
 use tokio::runtime::Runtime;
@@ -21,11 +21,13 @@ fn benchmark_downloads(c: &mut Criterion) {
     let mut group = c.benchmark_group("Download Comparison");
 
     group.bench_function("QUIC Download", |b| {
-        b.to_async(&rt).iter(|| benchmark_quic_download(&quic_client, &url));
+        b.to_async(&rt)
+            .iter(|| benchmark_quic_download(&quic_client, &url));
     });
 
     group.bench_function("HTTP/2 Download", |b| {
-        b.to_async(&rt).iter(|| benchmark_http2_download(&http2_client, &url));
+        b.to_async(&rt)
+            .iter(|| benchmark_http2_download(&http2_client, &url));
     });
 
     group.finish();

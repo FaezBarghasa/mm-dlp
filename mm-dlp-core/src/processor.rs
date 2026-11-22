@@ -1,6 +1,6 @@
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
-use lofty::tag::{Accessor, Tag, TagType};
+use lofty::tag::{Accessor, Tag};
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -11,8 +11,7 @@ use crate::config::MediaMetadata;
 use crate::error::EngineError;
 
 pub fn resolve_ffmpeg_path() -> Result<PathBuf, EngineError> {
-    which::which("ffmpeg")
-        .map_err(|_| EngineError::FfmpegNotFound)
+    which::which("ffmpeg").map_err(|_| EngineError::FfmpegNotFound)
 }
 
 pub async fn transcode_stream(
@@ -23,12 +22,14 @@ pub async fn transcode_stream(
     let ffmpeg_bin = resolve_ffmpeg_path()?;
 
     let mut cmd = Command::new(ffmpeg_bin);
-    cmd.arg("-i").arg("pipe:0")
-       .arg("-y");
+    cmd.arg("-i").arg("pipe:0").arg("-y");
 
     match target_format.to_lowercase().as_str() {
         "mp3" => {
-            cmd.arg("-codec:a").arg("libmp3lame").arg("-qscale:a").arg("2");
+            cmd.arg("-codec:a")
+                .arg("libmp3lame")
+                .arg("-qscale:a")
+                .arg("2");
         }
         "flac" => {
             cmd.arg("-codec:a").arg("flac");
@@ -51,13 +52,21 @@ pub async fn transcode_stream(
     cmd.arg("pipe:1");
 
     cmd.stdin(Stdio::piped())
-       .stdout(Stdio::piped())
-       .stderr(Stdio::null())
-       .kill_on_drop(true);
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
 
-    let mut child = cmd.spawn().map_err(|e| EngineError::FfmpegError(e.to_string()))?;
-    let mut stdin = child.stdin.take().ok_or_else(|| EngineError::FfmpegError("Failed to open stdin".to_string()))?;
-    let mut stdout = child.stdout.take().ok_or_else(|| EngineError::FfmpegError("Failed to open stdout".to_string()))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| EngineError::FfmpegError(e.to_string()))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| EngineError::FfmpegError("Failed to open stdin".to_string()))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| EngineError::FfmpegError("Failed to open stdout".to_string()))?;
 
     let write_stdin_task = tokio::spawn(async move {
         while let Some(bytes) = input_rx.recv().await {
@@ -82,21 +91,34 @@ pub async fn transcode_stream(
         Ok::<(), std::io::Error>(())
     });
 
-    let (stdin_res, stdout_res, status_res) = tokio::join!(write_stdin_task, read_stdout_task, child.wait());
-    
+    let (stdin_res, stdout_res, status_res) =
+        tokio::join!(write_stdin_task, read_stdout_task, child.wait());
+
     stdin_res.map_err(|e| EngineError::FfmpegError(e.to_string()))?;
-    stdout_res.map_err(|e| EngineError::FfmpegError(e.to_string()))?.map_err(|e| EngineError::IoError(e.to_string()))?;
-    
+    stdout_res
+        .map_err(|e| EngineError::FfmpegError(e.to_string()))?
+        .map_err(|e| EngineError::IoError(e.to_string()))?;
+
     let status = status_res.map_err(|e| EngineError::FfmpegError(e.to_string()))?;
     if !status.success() {
-        return Err(EngineError::FfmpegError("FFmpeg process returned non-zero exit code".to_string()));
+        return Err(EngineError::FfmpegError(
+            "FFmpeg process returned non-zero exit code".to_string(),
+        ));
     }
 
     Ok(())
 }
 
 pub async fn download_cover_art(client: &Client, url: &str) -> Option<Vec<u8>> {
-    client.get(url).send().await.ok()?.bytes().await.ok().map(|b| b.to_vec())
+    client
+        .get(url)
+        .send()
+        .await
+        .ok()?
+        .bytes()
+        .await
+        .ok()
+        .map(|b| b.to_vec())
 }
 
 pub fn tag_file_in_place(
@@ -131,7 +153,7 @@ pub fn tag_file_in_place(
             lofty::picture::MimeType::Png
         };
 
-        let mut builder = lofty::picture::Picture::unchecked(art_bytes)
+        let builder = lofty::picture::Picture::unchecked(art_bytes)
             .pic_type(lofty::picture::PictureType::CoverFront)
             .mime_type(mime);
         let picture = builder.build();
