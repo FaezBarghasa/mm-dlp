@@ -236,7 +236,16 @@ impl DashDownloader {
         file.flush().await?;
         drop(file);
 
-        let buffer_capacity = (self.concurrency * 2).max(16);
+        #[cfg(target_os = "ios")]
+        let effective_concurrency = self.concurrency.clamp(1, 4);
+        #[cfg(not(target_os = "ios"))]
+        let effective_concurrency = self.concurrency;
+
+        #[cfg(target_os = "ios")]
+        let buffer_capacity = effective_concurrency.max(2);
+        #[cfg(not(target_os = "ios"))]
+        let buffer_capacity = (effective_concurrency * 2).max(16);
+
         let (tx, rx) = mpsc::channel(buffer_capacity);
         let dest_path_buf = dest_path.to_path_buf();
 
@@ -247,7 +256,7 @@ impl DashDownloader {
                 .await
         });
 
-        let semaphore = Arc::new(Semaphore::new(self.concurrency));
+        let semaphore = Arc::new(Semaphore::new(effective_concurrency));
         let mut join_set = JoinSet::new();
 
         for seg in manifest.media_segments {

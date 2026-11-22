@@ -1,0 +1,44 @@
+#!/usr/bin/env bpftrace
+/*
+ * trace_tcp_drops.bt - Trace kernel TCP packet drops and retransmissions.
+ *
+ * Usage:
+ *   sudo bpftrace scripts/trace_tcp_drops.bt
+ */
+
+BEGIN
+{
+    printf("Tracing TCP drops and retransmissions... Hit Ctrl-C to end.\n");
+    printf("%-8s %-6s %-16s %-21s %-21s %-10s\n", "TIME", "PID", "COMM", "SRC", "DEST", "REASON");
+}
+
+tracepoint:skb:kfree_skb
+{
+    $skb = (struct sk_buff *)args->skbaddr;
+    $reason = args->reason;
+
+    // Filter to TCP protocol (IPPROTO_TCP == 6)
+    if (args->protocol == 0x0800 || args->protocol == 0x86dd) {
+        time("%H:%M:%S ");
+        printf("%-6d %-16s %-10d\n", pid, comm, $reason);
+        @drop_reasons[$reason] = count();
+    }
+}
+
+kprobe:tcp_retransmit_skb
+{
+    $sk = (struct sock *)arg0;
+    $inet = (struct inet_sock *)arg0;
+
+    time("%H:%M:%S ");
+    printf("%-6d %-16s [TCP RETRANSMIT]\n", pid, comm);
+    @retransmits[comm] = count();
+}
+
+END
+{
+    printf("\n=== Summary of TCP Drop Reasons ===\n");
+    print(@drop_reasons);
+    printf("\n=== Summary of TCP Retransmits by Process ===\n");
+    print(@retransmits);
+}

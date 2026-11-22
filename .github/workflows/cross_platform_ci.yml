@@ -1,0 +1,55 @@
+name: Cross-Platform CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Format Check
+        run: cargo fmt --check
+      - name: Clippy Audit
+        run: cargo clippy --workspace -- -D warnings
+      - name: Run Test Suite
+        run: cargo test --workspace
+
+  windows:
+    name: Windows (x86_64-pc-windows-msvc)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build & Check
+        run: cargo check --workspace
+      - name: Run Tests
+        run: cargo test --workspace
+
+  macos-ios:
+    name: macOS & iOS Universal Matrix
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust & Apple Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim
+      - name: Test on macOS Host
+        run: cargo test --workspace
+      - name: Build Universal XCFramework
+        run: |
+          chmod +x scripts/build_apple_xcframework.sh
+          ./scripts/build_apple_xcframework.sh

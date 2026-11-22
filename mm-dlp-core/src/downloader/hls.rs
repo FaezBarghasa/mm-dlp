@@ -180,7 +180,16 @@ impl HlsDownloader {
             ));
         }
 
-        let buffer_capacity = (self.concurrency * 2).max(16);
+        #[cfg(target_os = "ios")]
+        let effective_concurrency = self.concurrency.clamp(1, 4);
+        #[cfg(not(target_os = "ios"))]
+        let effective_concurrency = self.concurrency;
+
+        #[cfg(target_os = "ios")]
+        let buffer_capacity = effective_concurrency.max(2);
+        #[cfg(not(target_os = "ios"))]
+        let buffer_capacity = (effective_concurrency * 2).max(16);
+
         let (tx, rx) = mpsc::channel(buffer_capacity);
         let key_cache: Arc<RwLock<HashMap<String, Bytes>>> = Arc::new(RwLock::new(HashMap::new()));
         let dest_path_buf = dest_path.to_path_buf();
@@ -192,7 +201,7 @@ impl HlsDownloader {
                 .await
         });
 
-        let semaphore = Arc::new(Semaphore::new(self.concurrency));
+        let semaphore = Arc::new(Semaphore::new(effective_concurrency));
         let mut join_set = JoinSet::new();
 
         for seg in playlist.segments {

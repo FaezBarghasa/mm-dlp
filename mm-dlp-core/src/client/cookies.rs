@@ -37,8 +37,31 @@ impl CookieExtractor {
         #[cfg(target_os = "linux")]
         return self.extract_linux(&db_path);
 
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "ios")]
+        return Err(EngineError::OsApiError(
+            "Direct browser cookie extraction is forbidden on iOS due to app sandbox isolation. Inject cookies via Netscape format or HTTP headers instead.".to_string(),
+        ));
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "ios")))]
         return Err(EngineError::OsApiError("Unsupported OS for cookie extraction".to_string()));
+    }
+
+    /// Parse standard Netscape format cookie files, universal across all platforms including iOS.
+    pub fn parse_netscape_cookies(content: &str) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 7 {
+                let name = parts[5].to_string();
+                let value = parts[6].to_string();
+                result.push((name, value));
+            }
+        }
+        result
     }
 
     #[cfg(target_os = "windows")]
@@ -127,5 +150,24 @@ impl CookieExtractor {
                 Err(EngineError::DecryptionError("No Chrome secret found in keyring".into()))
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_netscape_cookies() {
+        let sample = "\
+# Netscape HTTP Cookie File
+# http://curl.haxx.se/rfc/cookie_spec.html
+.youtube.com\tTRUE\t/\tTRUE\t1750000000\tSID\tsample_sid_value
+.youtube.com\tTRUE\t/\tTRUE\t1750000000\tHSID\tsample_hsid_value
+";
+        let parsed = CookieExtractor::parse_netscape_cookies(sample);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], ("SID".to_string(), "sample_sid_value".to_string()));
+        assert_eq!(parsed[1], ("HSID".to_string(), "sample_hsid_value".to_string()));
     }
 }

@@ -16,10 +16,18 @@ pub mod parallel;
 pub mod torrent;
 
 pub fn build_http_client() -> Result<Client, EngineError> {
+    #[cfg(target_os = "ios")]
+    let (max_idle, idle_timeout) = (8, Duration::from_secs(30));
+    #[cfg(not(target_os = "ios"))]
+    let (max_idle, idle_timeout) = (32, Duration::from_secs(90));
+
     Client::builder()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
-        .pool_max_idle_per_host(10)
+        .tcp_nodelay(true)
+        .tcp_keepalive(Some(Duration::from_secs(60)))
+        .pool_max_idle_per_host(max_idle)
+        .pool_idle_timeout(idle_timeout)
         .user_agent("mm-dlp/1.0.0")
         .build()
         .map_err(|e| EngineError::Network(format!("Failed to build reqwest client: {}", e)))
