@@ -60,9 +60,8 @@ pub fn traverse_u64(obj: &Value, path: &[&str]) -> Option<u64> {
     })
 }
 
-static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<[^>]+>").expect("Invalid tag regex")
-});
+static TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<[^>]+>").expect("Invalid tag regex"));
 
 /// Strip HTML tags and entities, similar to yt-dlp `clean_html`.
 pub fn clean_html(html: &str) -> String {

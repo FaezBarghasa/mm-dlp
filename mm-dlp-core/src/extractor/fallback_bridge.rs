@@ -228,7 +228,10 @@ impl AsyncExtractor for FallbackBridgeExtractor {
         } else if let Ok(system_ytdlp) = which::which("yt-dlp") {
             // Guarantee system_ytdlp is not pointing back to mm-dlp binary
             if let Some(ref curr) = current_exe
-                && let (Ok(c1), Ok(c2)) = (std::fs::canonicalize(system_ytdlp.as_path()), std::fs::canonicalize(curr))
+                && let (Ok(c1), Ok(c2)) = (
+                    std::fs::canonicalize(system_ytdlp.as_path()),
+                    std::fs::canonicalize(curr),
+                )
                 && c1 == c2
             {
                 // Self-binary collision detected; run python -m yt_dlp instead

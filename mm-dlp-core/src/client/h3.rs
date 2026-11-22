@@ -118,8 +118,8 @@ impl H3Impersonator {
         let mut scid = [0; quiche::MAX_CONN_ID_LEN];
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         
         for (i, byte) in scid.iter_mut().enumerate() {
             *byte = ((timestamp >> (i % 8 * 8)) & 0xFF) as u8;

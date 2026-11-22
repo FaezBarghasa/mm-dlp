@@ -60,14 +60,17 @@ impl NativeMuxer {
             if audio_stream.parameters().id() != Id::AAC {
                 needs_aac_reencode = true;
                 
-                let mut audio_enc = ffmpeg::codec::context::Context::new()
+                let encoder_res = ffmpeg::codec::context::Context::new()
                     .encoder()
-                    .audio()
-                    .unwrap();
-                audio_enc.set_rate(44100);
-                audio_enc.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
-                audio_enc.set_format(ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar));
-                ost_audio.set_parameters(audio_enc);
+                    .audio();
+                if let Ok(mut audio_enc) = encoder_res {
+                    audio_enc.set_rate(44100);
+                    audio_enc.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
+                    audio_enc.set_format(ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar));
+                    ost_audio.set_parameters(audio_enc);
+                } else {
+                    return Err(EngineError::OsApiError("Failed to initialize audio encoder".into()));
+                }
             } else {
                 ost_audio.set_parameters(audio_stream.parameters());
             }

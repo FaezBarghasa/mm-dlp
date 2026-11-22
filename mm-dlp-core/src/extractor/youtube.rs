@@ -398,9 +398,8 @@ impl AsyncExtractor for YouTubeExtractor {
         let has_ciphers = json["streamingData"]["adaptiveFormats"]
             .as_array()
             .map(|arr| {
-                arr.iter().any(|item| {
-                    item["signatureCipher"].is_string() || item["cipher"].is_string()
-                })
+                arr.iter()
+                    .any(|item| item["signatureCipher"].is_string() || item["cipher"].is_string())
             })
             .unwrap_or(false);
 
@@ -539,9 +538,8 @@ impl PlatformExtractor for YouTubeExtractor {
         let has_ciphers = json["streamingData"]["adaptiveFormats"]
             .as_array()
             .map(|arr| {
-                arr.iter().any(|item| {
-                    item["signatureCipher"].is_string() || item["cipher"].is_string()
-                })
+                arr.iter()
+                    .any(|item| item["signatureCipher"].is_string() || item["cipher"].is_string())
             })
             .unwrap_or(false);
 

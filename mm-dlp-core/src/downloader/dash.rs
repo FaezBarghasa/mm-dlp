@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use reqwest::Client;
 use std::path::Path;
 use std::sync::Arc;
@@ -81,8 +80,8 @@ impl DashDownloader {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(1.0);
 
-                let template_duration: Option<f64> = extract_attribute(attrs, "duration")
-                    .and_then(|s| s.parse().ok());
+                let template_duration: Option<f64> =
+                    extract_attribute(attrs, "duration").and_then(|s| s.parse().ok());
 
                 // Check for SegmentTimeline with repetition 'r' attributes
                 let mut timeline_segments = Vec::new();
@@ -92,21 +91,30 @@ impl DashDownloader {
                 {
                     let timeline_content = &manifest[timeline_start..timeline_start + timeline_end];
                     let mut curr_t = 0u64;
-                    for s_tag in timeline_content.split("<S ") {
-                        if s_tag.trim().is_empty() {
+                    for part in timeline_content.split("<S ") {
+                        let trimmed = part.trim();
+                        if trimmed.is_empty() || trimmed.starts_with("<SegmentTimeline") {
                             continue;
                         }
-                        let s_slice = if let Some(close) = s_tag.find('>') {
-                            &s_tag[..close]
+                        let s_slice = if let Some(close) = trimmed.find("/>") {
+                            &trimmed[..close]
+                        } else if let Some(close) = trimmed.find('>') {
+                            &trimmed[..close]
                         } else {
-                            s_tag
+                            trimmed
                         };
 
-                        if let Some(t_val) = extract_attribute(s_slice, "t").and_then(|s| s.parse::<u64>().ok()) {
+                        if let Some(t_val) =
+                            extract_attribute(s_slice, "t").and_then(|s| s.parse::<u64>().ok())
+                        {
                             curr_t = t_val;
                         }
-                        let d_val = extract_attribute(s_slice, "d").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-                        let r_val = extract_attribute(s_slice, "r").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                        let d_val = extract_attribute(s_slice, "d")
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        let r_val = extract_attribute(s_slice, "r")
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
 
                         let count = if r_val >= 0 { (r_val as usize) + 1 } else { 1 };
                         for _ in 0..count {
@@ -132,7 +140,8 @@ impl DashDownloader {
                     }
                 } else {
                     let mut segment_count = 10;
-                    if let (Some(total_sec), Some(dur)) = (presentation_duration_secs, template_duration)
+                    if let (Some(total_sec), Some(dur)) =
+                        (presentation_duration_secs, template_duration)
                         && dur > 0.0
                     {
                         let seg_duration_sec = dur / timescale;

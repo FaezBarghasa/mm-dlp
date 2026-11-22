@@ -238,7 +238,10 @@ impl HlsDownloader {
                                     .map_err(|e| {
                                         EngineError::Network(format!("HLS key read failed: {}", e))
                                     })?;
-                                cache.write().await.insert(key_info.uri.clone(), fetched.clone());
+                                cache
+                                    .write()
+                                    .await
+                                    .insert(key_info.uri.clone(), fetched.clone());
                                 fetched
                             }
                         };

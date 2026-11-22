@@ -20,6 +20,9 @@ static CLIENT_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"client_id\s*:\s*"([a-zA-Z0-9]{32})""#).expect("Invalid client_id regex")
 });
 
+static SCRIPT_SRC_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"src="([^"]+\.js)""#).expect("Invalid script src regex"));
+
 pub struct SoundCloudExtractor {
     client_id_cache: RwLock<Option<String>>,
 }
@@ -50,10 +53,7 @@ impl SoundCloudExtractor {
             .text()
             .await?;
         let mut js_urls = Vec::new();
-        for cap in Regex::new(r#"src="([^"]+\.js)""#)
-            .unwrap()
-            .captures_iter(&home_html)
-        {
+        for cap in SCRIPT_SRC_REGEX.captures_iter(&home_html) {
             if let Some(m) = cap.get(1) {
                 js_urls.push(m.as_str().to_string());
             }

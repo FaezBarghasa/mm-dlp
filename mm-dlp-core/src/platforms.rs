@@ -232,8 +232,7 @@ impl PlatformExtractor for TwitchExtractor {
                 let id = clean_id(id_part);
                 if !id.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Clip".to_string(), media_id: id }); }
             // Default to assuming a Live stream (channel name)
-            } else {
-                let host_idx = url.find("twitch.tv/").unwrap();
+            } else if let Some(host_idx) = url.find("twitch.tv/") {
                 let channel = clean_id(&url[host_idx + 10..]);
                 if !channel.is_empty() { return Some(MediaMetadata { platform: "Twitch".to_string(), media_type: "Stream".to_string(), media_id: channel }); }
             }
@@ -264,8 +263,7 @@ impl PlatformExtractor for SpotifyExtractor {
 struct VimeoExtractor;
 impl PlatformExtractor for VimeoExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
-        if url.contains("vimeo.com/") {
-            let host_idx = url.find("vimeo.com/").unwrap();
+        if let Some(host_idx) = url.find("vimeo.com/") {
             let id = clean_id(&url[host_idx + 10..]);
             // Ensure the extracted ID is numeric, as Vimeo video IDs are typically numbers
             if !id.is_empty() && id.chars().all(char::is_numeric) {
@@ -280,8 +278,7 @@ impl PlatformExtractor for VimeoExtractor {
 struct SoundCloudExtractor;
 impl PlatformExtractor for SoundCloudExtractor {
     fn extract(&self, url: &str) -> Option<MediaMetadata> {
-        if url.contains("soundcloud.com/") {
-            let host_idx = url.find("soundcloud.com/").unwrap();
+        if let Some(host_idx) = url.find("soundcloud.com/") {
             let path = &url[host_idx + 15..];
             // Split path into parts to extract artist and track name
             let parts: Vec<&str> = path.split('?').next().unwrap_or("").split('#').next().unwrap_or("").split('/').collect();

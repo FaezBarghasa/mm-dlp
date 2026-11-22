@@ -154,7 +154,12 @@ impl SourceResolver {
             )));
         }
 
-        let extractor = self.registry.get_extractor(platform).unwrap();
+        let extractor = self.registry.get_extractor(platform).ok_or_else(|| {
+            EngineError::ExtractorError(format!(
+                "Extractor not registered for platform '{}'",
+                platform
+            ))
+        })?;
         let candidate = extractor.get_stream_url(client, &track_id).await?;
 
         self.cache.insert(cache_key, candidate.clone()).await;

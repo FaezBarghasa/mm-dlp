@@ -2,7 +2,7 @@ use crate::downloader::parallel::SequencedChunk;
 use crate::error::EngineError;
 use std::collections::BinaryHeap;
 use std::path::Path;
-use tokio::fs::OpenOptions;
+use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 
@@ -25,7 +25,8 @@ impl SequentialFlusher {
         rx: mpsc::Receiver<Result<SequencedChunk, EngineError>>,
         total_segments: usize,
     ) -> Result<u64, EngineError> {
-        self.flush_to_disk_with_append(path, rx, total_segments, false).await
+        self.flush_to_disk_with_append(path, rx, total_segments, false)
+            .await
     }
 
     pub async fn flush_to_disk_with_append<P: AsRef<Path>>(
