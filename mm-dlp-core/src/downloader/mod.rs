@@ -106,16 +106,27 @@ pub mod splice {
     use std::io;
     use std::os::unix::io::RawFd;
 
-    /// Perform a zero-copy Linux splice operation forwarding bytes directly to stdout.
+    /// Perform a zero-copy Linux splice operation forwarding bytes directly between pipes.
+    ///
+    /// # Clarification & Linux Constraints
+    /// Linux `splice(2)` requires at least one file descriptor to refer to a pipe.
+    /// When transferring data from a TLS/QUIC network socket, user-space decryption
+    /// is mandatory, so socket-to-stdout splice is not feasible without kernel kTLS.
+    /// This function performs genuine in-kernel zero-copy page forwarding between two OS pipes
+    /// (e.g., from an internal buffer pipe into standard output or another IPC pipe).
     ///
     /// # Safety
-    /// Requires a valid file descriptor `in_fd`.
-    pub unsafe fn splice_fd_to_stdout(in_fd: RawFd, len: usize) -> io::Result<usize> {
+    /// Requires valid file descriptors `in_pipe_fd` and `out_pipe_fd`.
+    pub unsafe fn splice_pipe_to_pipe(
+        in_pipe_fd: RawFd,
+        out_pipe_fd: RawFd,
+        len: usize,
+    ) -> io::Result<usize> {
         let ret = unsafe {
             libc::splice(
-                in_fd,
+                in_pipe_fd,
                 std::ptr::null_mut(),
-                libc::STDOUT_FILENO,
+                out_pipe_fd,
                 std::ptr::null_mut(),
                 len,
                 libc::SPLICE_F_MOVE | libc::SPLICE_F_MORE,

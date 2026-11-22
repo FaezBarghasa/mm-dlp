@@ -392,6 +392,9 @@ impl DashDownloader {
         });
 
         let mut seen_urls = HashSet::new();
+        let mut seen_queue = std::collections::VecDeque::new();
+        const MAX_SEEN_HISTORY: usize = 500;
+
         let semaphore = Arc::new(Semaphore::new(effective_concurrency));
         let mut join_set = JoinSet::new();
         let mut current_seq_idx = 0usize;
@@ -403,6 +406,8 @@ impl DashDownloader {
                 .unwrap_or(2.0)
                 .clamp(0.5, 10.0),
         );
+        let mut refresh_interval = tokio::time::interval(poll_interval);
+        refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             if cancel_token.is_cancelled() {
@@ -411,6 +416,13 @@ impl DashDownloader {
 
             for seg in &current_manifest.media_segments {
                 if seen_urls.insert(seg.url.clone()) {
+                    seen_queue.push_back(seg.url.clone());
+                    if seen_queue.len() > MAX_SEEN_HISTORY
+                        && let Some(old) = seen_queue.pop_front()
+                    {
+                        seen_urls.remove(&old);
+                    }
+
                     let assigned_index = current_seq_idx;
                     current_seq_idx += 1;
 
@@ -454,8 +466,14 @@ impl DashDownloader {
                 }
             }
 
-            while let Some(res) = join_set.try_join_next() {
-                if let Ok(chunk_res) = res {
+            if !current_manifest.is_dynamic && join_set.is_empty() {
+                break;
+            }
+
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                Some(res) = join_set.join_next(), if !join_set.is_empty() => {
+                    let chunk_res = res.map_err(|e| EngineError::Network(e.to_string()))?;
                     match chunk_res {
                         Ok(chunk) => {
                             if tx.send(Ok(chunk)).await.is_err() {
@@ -471,18 +489,15 @@ impl DashDownloader {
                         }
                     }
                 }
-            }
-
-            tokio::select! {
-                _ = cancel_token.cancelled() => break,
-                _ = tokio::time::sleep(poll_interval) => {}
-            }
-
-            if let Ok(resp) = self.client.get(manifest_url).send().await
-                && let Ok(text) = resp.text().await
-                && let Ok(updated) = Self::parse_manifest(&text, manifest_url)
-            {
-                current_manifest = updated;
+                _ = refresh_interval.tick() => {
+                    if current_manifest.is_dynamic
+                        && let Ok(resp) = self.client.get(manifest_url).send().await
+                        && let Ok(text) = resp.text().await
+                        && let Ok(updated) = Self::parse_manifest(&text, manifest_url)
+                    {
+                        current_manifest = updated;
+                    }
+                }
             }
         }
 

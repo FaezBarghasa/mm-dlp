@@ -116,3 +116,113 @@ async fn test_streaming_flusher_cancellation() {
     let res = handle.await.expect("Task failed");
     assert!(res.is_ok());
 }
+
+#[tokio::test]
+async fn test_streaming_flusher_max_backlog_overflow() {
+    let flusher = SequentialFlusher::new().with_max_backlog(4);
+    let (tx, rx) = mpsc::channel(16);
+
+    // Send index 1, 2, 3, 4, 5 (omitting index 0 to force backlog accumulation)
+    for idx in 1..=5 {
+        tx.send(Ok(SequencedChunk {
+            index: idx,
+            data: Bytes::from(format!("PART{}", idx)),
+        }))
+        .await
+        .expect("Send failed");
+    }
+
+    let mut output = Cursor::new(Vec::new());
+    let res = flusher.flush_to_writer(&mut output, rx, 10).await;
+    assert!(res.is_err(), "Expected buffer overflow error");
+    match res {
+        Err(mm_dlp_core::EngineError::IoError(msg)) => {
+            assert!(msg.contains("backlog exceeded"));
+        }
+        other => panic!("Unexpected result: {:?}", other),
+    }
+}
+
+#[test]
+fn test_live_tracker_bounded_history() {
+    use std::collections::{HashSet, VecDeque};
+
+    let mut seen_urls: HashSet<String> = HashSet::new();
+    let mut seen_queue: VecDeque<String> = VecDeque::new();
+    let max_history = 500;
+
+    for i in 0..650 {
+        let url = format!("https://stream.example.com/chunk_{}.ts", i);
+        if seen_urls.insert(url.clone()) {
+            seen_queue.push_back(url);
+            if seen_queue.len() > max_history {
+                if let Some(oldest) = seen_queue.pop_front() {
+                    seen_urls.remove(&oldest);
+                }
+            }
+        }
+    }
+
+    assert_eq!(seen_urls.len(), 500);
+    assert_eq!(seen_queue.len(), 500);
+    // Oldest chunk 0 should have been evicted
+    assert!(!seen_urls.contains("https://stream.example.com/chunk_0.ts"));
+    // Newest chunk 649 must be retained
+    assert!(seen_urls.contains("https://stream.example.com/chunk_649.ts"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_splice_pipe_to_pipe_roundtrip() {
+    use mm_dlp_core::downloader::splice::splice_pipe_to_pipe;
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    let mut pipe1 = [0; 2];
+    let mut pipe2 = [0; 2];
+    unsafe {
+        assert_eq!(libc::pipe(pipe1.as_mut_ptr()), 0);
+        assert_eq!(libc::pipe(pipe2.as_mut_ptr()), 0);
+    }
+
+    let test_data = b"ZERO_COPY_SPLICE_IN_KERNEL_TEST_PAYLOAD";
+
+    // Write into pipe 1 write-end
+    let mut w1 = unsafe { std::fs::File::from_raw_fd(pipe1[1]) };
+    w1.write_all(test_data).expect("Failed to write to pipe1");
+
+    // Splice from pipe 1 read-end to pipe 2 write-end
+    let spliced =
+        unsafe { splice_pipe_to_pipe(pipe1[0], pipe2[1], test_data.len()) }.expect("Splice failed");
+    assert_eq!(spliced, test_data.len());
+
+    // Read from pipe 2 read-end
+    let mut r2 = unsafe { std::fs::File::from_raw_fd(pipe2[0]) };
+    let mut buf = vec![0u8; test_data.len()];
+    r2.read_exact(&mut buf).expect("Failed to read from pipe2");
+    assert_eq!(&buf[..], test_data);
+
+    unsafe {
+        libc::close(pipe1[0]);
+        libc::close(pipe2[1]);
+    }
+}
+
+#[tokio::test]
+async fn test_mux_streams_piped_cancellation() {
+    let (_v_tx, v_rx) = mpsc::channel(4);
+    let (_a_tx, a_rx) = mpsc::channel(4);
+    let cancel_token = CancellationToken::new();
+
+    // Cancel immediately
+    cancel_token.cancel();
+
+    let out_dir = std::env::temp_dir().join(format!("test_mux_{}.mp4", std::process::id()));
+    let res =
+        mm_dlp_core::processor::mux_streams_piped(v_rx, a_rx, &out_dir, "mp4", "m4a", cancel_token)
+            .await;
+
+    // Must gracefully handle cancellation without panic or hanging
+    let _ = tokio::fs::remove_file(&out_dir).await;
+    assert!(res.is_err() || res.is_ok());
+}

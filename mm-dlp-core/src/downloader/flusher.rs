@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 pub struct SequentialFlusher {
     heap: BinaryHeap<SequencedChunk>,
     next_expected_index: usize,
+    max_backlog: usize,
 }
 
 impl SequentialFlusher {
@@ -17,7 +18,13 @@ impl SequentialFlusher {
         Self {
             heap: BinaryHeap::new(),
             next_expected_index: 0,
+            max_backlog: 64,
         }
+    }
+
+    pub fn with_max_backlog(mut self, max_backlog: usize) -> Self {
+        self.max_backlog = max_backlog.max(4);
+        self
     }
 
     /// Flush sequenced chunks to any asynchronous writer.
@@ -33,6 +40,13 @@ impl SequentialFlusher {
             match rx.recv().await {
                 Some(Ok(chunk)) => {
                     self.heap.push(chunk);
+
+                    if self.heap.len() > self.max_backlog {
+                        return Err(EngineError::IoError(format!(
+                            "SequentialFlusher backlog exceeded maximum window of {} chunks waiting for index {}",
+                            self.max_backlog, self.next_expected_index
+                        )));
+                    }
 
                     // Pop directly and flush contiguous runs matching expectations
                     while let Some(top) = self.heap.peek() {
@@ -97,6 +111,14 @@ impl SequentialFlusher {
                     match chunk_res {
                         Some(Ok(chunk)) => {
                             self.heap.push(chunk);
+
+                            if self.heap.len() > self.max_backlog {
+                                return Err(EngineError::IoError(format!(
+                                    "SequentialFlusher live backlog exceeded maximum window of {} chunks waiting for index {}",
+                                    self.max_backlog, self.next_expected_index
+                                )));
+                            }
+
                             while let Some(top) = self.heap.peek() {
                                 if top.index == self.next_expected_index {
                                     if let Some(popped) = self.heap.pop() {

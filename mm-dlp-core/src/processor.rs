@@ -285,14 +285,32 @@ pub async fn mux_streams_piped(
         let v_fifo = std::env::temp_dir().join(format!("mm_v_{}.fifo", rand_id));
         let a_fifo = std::env::temp_dir().join(format!("mm_a_{}.fifo", rand_id));
 
+        let _ = tokio::fs::remove_file(&v_fifo).await;
+        let _ = tokio::fs::remove_file(&a_fifo).await;
+
         let v_c = CString::new(v_fifo.to_string_lossy().as_bytes())
             .map_err(|e| EngineError::IoError(e.to_string()))?;
         let a_c = CString::new(a_fifo.to_string_lossy().as_bytes())
             .map_err(|e| EngineError::IoError(e.to_string()))?;
 
         unsafe {
-            libc::mkfifo(v_c.as_ptr(), 0o600);
-            libc::mkfifo(a_c.as_ptr(), 0o600);
+            let res_v = libc::mkfifo(v_c.as_ptr(), 0o600);
+            if res_v != 0 {
+                return Err(EngineError::IoError(format!(
+                    "Failed to create video FIFO at {}: {}",
+                    v_fifo.display(),
+                    std::io::Error::last_os_error()
+                )));
+            }
+            let res_a = libc::mkfifo(a_c.as_ptr(), 0o600);
+            if res_a != 0 {
+                let _ = tokio::fs::remove_file(&v_fifo).await;
+                return Err(EngineError::IoError(format!(
+                    "Failed to create audio FIFO at {}: {}",
+                    a_fifo.display(),
+                    std::io::Error::last_os_error()
+                )));
+            }
         }
 
         let mut cmd = Command::new(&ffmpeg_bin);
@@ -376,33 +394,47 @@ pub async fn mux_streams_piped(
             flusher.flush_live_to_writer(file, audio_rx, a_token).await
         });
 
-        let mut stdout_bytes = 0u64;
-        if is_stdout && let Some(mut stdout_pipe) = child.stdout.take() {
-            let mut out = tokio::io::stdout();
-            let mut buf = [0u8; 32768];
-            loop {
-                let n = stdout_pipe
-                    .read(&mut buf)
-                    .await
-                    .map_err(|e| EngineError::IoError(e.to_string()))?;
-                if n == 0 {
-                    break;
+        let stdout_handle = if is_stdout && child.stdout.is_some() {
+            let mut stdout_pipe = child.stdout.take().unwrap();
+            let s_token = cancel_token.clone();
+            tokio::spawn(async move {
+                let mut out = tokio::io::stdout();
+                let mut buf = [0u8; 32768];
+                let mut total = 0u64;
+                loop {
+                    tokio::select! {
+                        _ = s_token.cancelled() => {
+                            break;
+                        }
+                        read_res = stdout_pipe.read(&mut buf) => {
+                            let n = read_res.map_err(|e| EngineError::IoError(e.to_string()))?;
+                            if n == 0 {
+                                break;
+                            }
+                            out.write_all(&buf[..n])
+                                .await
+                                .map_err(|e| EngineError::IoError(e.to_string()))?;
+                            total += n as u64;
+                        }
+                    }
                 }
-                out.write_all(&buf[..n])
-                    .await
-                    .map_err(|e| EngineError::IoError(e.to_string()))?;
-                stdout_bytes += n as u64;
-            }
-            let _ = out.flush().await;
-        }
+                let _ = out.flush().await;
+                Ok::<u64, EngineError>(total)
+            })
+        } else {
+            tokio::spawn(async move { Ok::<u64, EngineError>(0) })
+        };
 
-        let (v_res, a_res, status_res) = tokio::join!(v_handle, a_handle, child.wait());
+        let (v_res, a_res, stdout_res, status_res) =
+            tokio::join!(v_handle, a_handle, stdout_handle, child.wait());
 
         let _ = tokio::fs::remove_file(&v_fifo).await;
         let _ = tokio::fs::remove_file(&a_fifo).await;
 
         let v_bytes = v_res.map_err(|e| EngineError::ConcurrencyError(e.to_string()))??;
         let a_bytes = a_res.map_err(|e| EngineError::ConcurrencyError(e.to_string()))??;
+        let stdout_bytes =
+            stdout_res.map_err(|e| EngineError::ConcurrencyError(e.to_string()))??;
 
         let status = status_res.map_err(|e| EngineError::FfmpegError(e.to_string()))?;
         if !status.success() && !cancel_token.is_cancelled() {
