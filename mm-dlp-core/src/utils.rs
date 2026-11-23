@@ -116,7 +116,8 @@ pub fn expand_output_template_with_meta(template: &str, ctx: &TemplateContext) -
         result = format!("{}.{}", result, ctx.ext);
     }
 
-    sanitize_filename(&result)
+    let parts: Vec<String> = result.split('/').map(sanitize_filename).collect();
+    parts.join("/")
 }
 
 /// Expands a yt-dlp output template string (e.g. "%(title)s [%(id)s].%(ext)s").
