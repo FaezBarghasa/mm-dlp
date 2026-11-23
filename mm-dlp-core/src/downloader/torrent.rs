@@ -240,14 +240,21 @@ impl TorrentDownloader {
                         if let Some(ref live) = stats.live {
                             let speed_mbps = live.download_speed.mbps;
                             let peer_count = live.snapshot.peer_stats.live;
-                            callback_loop.on_status(format!(
-                                "Downloading: {:.1}% ({}/{} bytes) @ {:.2} MiB/s [{} active peers]",
-                                if total > 0 { (progress as f64 / total as f64) * 100.0 } else { 0.0 },
-                                progress,
-                                total,
-                                speed_mbps,
-                                peer_count
-                            ));
+                            if peer_count == 0 && total > 0 && progress == 0 {
+                                callback_loop.on_status(format!(
+                                    "Torrent swarm warning: 0 active peers connected (info_hash: {})",
+                                    handle_clone.info_hash().as_string()
+                                ));
+                            } else {
+                                callback_loop.on_status(format!(
+                                    "Downloading: {:.1}% ({}/{} bytes) @ {:.2} MiB/s [{} active peers]",
+                                    if total > 0 { (progress as f64 / total as f64) * 100.0 } else { 0.0 },
+                                    progress,
+                                    total,
+                                    speed_mbps,
+                                    peer_count
+                                ));
+                            }
                         }
 
                         if stats.finished {

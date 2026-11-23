@@ -54,9 +54,16 @@ impl FfmpegMuxer {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| EngineError::OsApiError(format!("Failed to spawn ffmpeg: {}", e)))?;
+        let mut child = command.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                EngineError::OsApiError(
+                    "ffmpeg executable not found in system PATH. Install ffmpeg to mux video and audio streams automatically."
+                        .to_string(),
+                )
+            } else {
+                EngineError::OsApiError(format!("Failed to spawn ffmpeg: {}", e))
+            }
+        })?;
 
         let stderr = child.stderr.take().ok_or_else(|| {
             EngineError::OsApiError("Failed to capture stderr from ffmpeg process".into())

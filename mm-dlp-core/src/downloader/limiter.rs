@@ -68,11 +68,10 @@ pub struct RateLimiter {
 impl RateLimiter {
     pub fn new(bytes_per_sec: u64) -> Self {
         let max_rate = bytes_per_sec.max(1) as f64;
-        let burst_capacity = max_rate.max(65536.0);
         Self {
             bytes_per_sec: bytes_per_sec.max(1),
             state: Arc::new(Mutex::new(BucketState {
-                tokens: burst_capacity,
+                tokens: max_rate,
                 last_replenish: Instant::now(),
             })),
         }
@@ -88,7 +87,7 @@ impl RateLimiter {
 
         let needed = bytes as f64;
         let rate = self.bytes_per_sec as f64;
-        let burst_capacity = rate.max(65536.0);
+        let capacity = rate;
 
         let wait_duration = {
             let mut state = self.state.lock().await;
@@ -96,8 +95,8 @@ impl RateLimiter {
             let elapsed = now.duration_since(state.last_replenish).as_secs_f64();
             state.last_replenish = now;
 
-            // Replenish tokens up to burst capacity
-            state.tokens = (state.tokens + elapsed * rate).min(burst_capacity);
+            // Replenish tokens up to capacity
+            state.tokens = (state.tokens + elapsed * rate).min(capacity);
 
             // Deduct requested tokens (token debt permitted)
             state.tokens -= needed;
