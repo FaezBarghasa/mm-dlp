@@ -17,8 +17,8 @@ use crate::extractor::PlatformRegistry;
 use crate::extractor::format_selector::{FormatSelector, SelectedFormat};
 use crate::extractor::traits::MediaFormat;
 use crate::processor::{
-    download_cover_art, extract_audio_from_file, mux_streams_piped, mux_streams_to_file,
-    tag_file_in_place,
+    download_cover_art, extract_audio_from_file, mux_streams_piped_with_buffer,
+    mux_streams_to_file, tag_file_in_place,
 };
 use crate::resolver::SourceResolver;
 use crate::utils::{
@@ -39,6 +39,7 @@ pub struct MediaDownloadOptions {
     pub embed_thumbnail: bool,
     pub embed_metadata: bool,
     pub loudness_norm: bool,
+    pub buffer_size_bytes: Option<usize>,
 }
 
 impl Default for MediaDownloadOptions {
@@ -55,6 +56,7 @@ impl Default for MediaDownloadOptions {
             embed_thumbnail: false,
             embed_metadata: true,
             loudness_norm: false,
+            buffer_size_bytes: None,
         }
     }
 }
@@ -398,13 +400,17 @@ impl MmDlpEngine {
                         options.concurrent_fragments,
                         cancel_token.clone(),
                     );
-                    let mux_fut = mux_streams_piped(
+                    let buffer_bytes = options
+                        .buffer_size_bytes
+                        .unwrap_or_else(crate::downloader::flusher::default_streaming_buffer_size);
+                    let mux_fut = mux_streams_piped_with_buffer(
                         v_rx,
                         a_rx,
                         &final_target_path,
                         &video.ext,
                         &audio.ext,
                         cancel_token.clone(),
+                        buffer_bytes,
                     );
 
                     let (v_res, a_res, mux_res) = tokio::join!(v_fut, a_fut, mux_fut);

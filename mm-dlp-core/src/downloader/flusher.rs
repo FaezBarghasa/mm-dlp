@@ -32,7 +32,8 @@ pub fn get_system_ram_bytes() -> usize {
                 &mut len,
                 std::ptr::null_mut(),
                 0,
-            ) == 0 {
+            ) == 0
+            {
                 (mem_size as usize).max(512 * 1024 * 1024)
             } else {
                 512 * 1024 * 1024
@@ -92,15 +93,21 @@ pub fn parse_buffer_size(s: &str) -> Result<usize, String> {
         return Ok(bytes);
     }
     if let Some(num) = s.strip_suffix("gb").or_else(|| s.strip_suffix('g')) {
-        let val: f64 = num.parse().map_err(|e| format!("Invalid GB value: {}", e))?;
+        let val: f64 = num
+            .parse()
+            .map_err(|e| format!("Invalid GB value: {}", e))?;
         return Ok((val * 1024.0 * 1024.0 * 1024.0) as usize);
     }
     if let Some(num) = s.strip_suffix("mb").or_else(|| s.strip_suffix('m')) {
-        let val: f64 = num.parse().map_err(|e| format!("Invalid MB value: {}", e))?;
+        let val: f64 = num
+            .parse()
+            .map_err(|e| format!("Invalid MB value: {}", e))?;
         return Ok((val * 1024.0 * 1024.0) as usize);
     }
     if let Some(num) = s.strip_suffix("kb").or_else(|| s.strip_suffix('k')) {
-        let val: f64 = num.parse().map_err(|e| format!("Invalid KB value: {}", e))?;
+        let val: f64 = num
+            .parse()
+            .map_err(|e| format!("Invalid KB value: {}", e))?;
         return Ok((val * 1024.0) as usize);
     }
     Err(format!("Unrecognized buffer size format: {}", s))
@@ -174,8 +181,9 @@ impl SequentialFlusher {
                     while let Some(top) = self.heap.peek() {
                         if top.index == self.next_expected_index {
                             if let Some(popped) = self.heap.pop() {
-                                self.current_buffered_bytes =
-                                    self.current_buffered_bytes.saturating_sub(popped.data.len());
+                                self.current_buffered_bytes = self
+                                    .current_buffered_bytes
+                                    .saturating_sub(popped.data.len());
                                 total_bytes += popped.data.len() as u64;
                                 writer
                                     .write_all(&popped.data)

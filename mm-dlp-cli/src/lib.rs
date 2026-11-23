@@ -224,6 +224,10 @@ struct Cli {
     /// Embed subtitles into media file
     #[arg(long = "embed-subs", alias = "embed-sub")]
     embed_subs: bool,
+
+    /// Streaming buffer size in bytes or unit (e.g. "100M", "512M", "2G", "max"). Defaults to 100M on mobile, 512M on desktop.
+    #[arg(long = "buffer-size", default_value = "default")]
+    buffer_size: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -279,6 +283,27 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
     config.proxy = cli.proxy.clone();
     config.cookies_file = cli.cookies.clone();
+
+    let buffer_size_bytes =
+        match mm_dlp_core::downloader::flusher::parse_buffer_size(&cli.buffer_size) {
+            Ok(sz) => sz,
+            Err(e) => {
+                eprintln!("[error] {}", e);
+                if !cli.ignore_errors {
+                    std::process::exit(1);
+                }
+                mm_dlp_core::downloader::flusher::default_streaming_buffer_size()
+            }
+        };
+    config.buffer_size_bytes = Some(buffer_size_bytes as u64);
+
+    if cli.verbose {
+        eprintln!(
+            "[debug] Streaming buffer size configured: {} ({:.1} MiB)",
+            cli.buffer_size,
+            buffer_size_bytes as f64 / (1024.0 * 1024.0)
+        );
+    }
 
     let engine = MmDlpEngine::new(config)?;
 
@@ -436,6 +461,7 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             embed_thumbnail: cli.embed_thumbnail && !is_stdout,
             embed_metadata: cli.embed_metadata && !is_stdout,
             loudness_norm: cli.loudness_norm,
+            buffer_size_bytes: Some(buffer_size_bytes),
         };
 
         let callback: Arc<dyn DownloadProgressCallback> =
@@ -578,6 +604,7 @@ async fn handle_legacy_download(
         embed_thumbnail: false,
         embed_metadata: true,
         loudness_norm: false,
+        buffer_size_bytes: None,
     };
 
     let callback: Arc<dyn DownloadProgressCallback> = Arc::new(CliProgressCallback::new(false));

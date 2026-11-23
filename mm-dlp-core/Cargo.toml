@@ -37,7 +37,7 @@ quiche = { version = "0.30.1", features = ["boring"] }
 rquickjs = { version = "0.14.0" }
 wasmer = "7.1.0"
 ffmpeg-next = "9.1.0"
-secret-service = { version = "6.0.0", features = ["rt-tokio-crypto-rust"] }
+secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
 security-framework = "3.7.0"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Security_Cryptography",

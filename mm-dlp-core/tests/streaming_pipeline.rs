@@ -310,3 +310,50 @@ async fn test_mux_streams_piped_with_ffmpeg_e2e() {
 
     let _ = tokio::fs::remove_file(&out_file).await;
 }
+
+#[test]
+fn test_streaming_buffer_defaults_and_max_ram() {
+    use mm_dlp_core::downloader::flusher::{
+        default_streaming_buffer_size, get_system_ram_bytes, parse_buffer_size,
+    };
+
+    let default_sz = default_streaming_buffer_size();
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    assert_eq!(default_sz, 100 * 1024 * 1024);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    assert_eq!(default_sz, 512 * 1024 * 1024);
+
+    assert_eq!(parse_buffer_size("100M").unwrap(), 100 * 1024 * 1024);
+    assert_eq!(parse_buffer_size("512m").unwrap(), 512 * 1024 * 1024);
+    assert_eq!(parse_buffer_size("1g").unwrap(), 1024 * 1024 * 1024);
+    assert_eq!(parse_buffer_size("2gb").unwrap(), 2 * 1024 * 1024 * 1024);
+
+    let max_ram = get_system_ram_bytes();
+    assert!(max_ram >= 512 * 1024 * 1024);
+    assert_eq!(parse_buffer_size("max").unwrap(), max_ram);
+}
+
+#[tokio::test]
+async fn test_streaming_flusher_max_bytes_overflow() {
+    let flusher = SequentialFlusher::new().with_max_buffer_bytes(1024 * 1024); // 1 MiB limit
+    let (tx, rx) = mpsc::channel(4);
+
+    // Send a 2 MiB chunk with index 1 (omitting index 0 to force heap accumulation)
+    let huge_chunk = vec![0xAAu8; 2 * 1024 * 1024];
+    tx.send(Ok(SequencedChunk {
+        index: 1,
+        data: Bytes::from(huge_chunk),
+    }))
+    .await
+    .expect("Send failed");
+
+    let mut output = Cursor::new(Vec::new());
+    let res = flusher.flush_to_writer(&mut output, rx, 10).await;
+    assert!(res.is_err(), "Expected buffer overflow error");
+    match res {
+        Err(mm_dlp_core::EngineError::IoError(msg)) => {
+            assert!(msg.contains("backlog exceeded limits"));
+        }
+        other => panic!("Unexpected result: {:?}", other),
+    }
+}
