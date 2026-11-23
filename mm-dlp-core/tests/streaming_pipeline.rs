@@ -224,5 +224,5 @@ async fn test_mux_streams_piped_cancellation() {
 
     // Must gracefully handle cancellation without panic or hanging
     let _ = tokio::fs::remove_file(&out_dir).await;
-    assert!(res.is_err() || res.is_ok());
+    assert!(matches!(res, Err(mm_dlp_core::EngineError::Cancelled)));
 }

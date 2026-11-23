@@ -272,6 +272,10 @@ pub async fn mux_streams_piped(
     let ffmpeg_bin = resolve_ffmpeg_path()?;
     let is_stdout = output_path == Path::new("-");
 
+    if cancel_token.is_cancelled() {
+        return Err(EngineError::Cancelled);
+    }
+
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -374,6 +378,7 @@ pub async fn mux_streams_piped(
         let v_token = cancel_token.clone();
         let v_handle = tokio::spawn(async move {
             let file = tokio::fs::OpenOptions::new()
+                .read(true)
                 .write(true)
                 .open(&v_path)
                 .await
@@ -386,6 +391,7 @@ pub async fn mux_streams_piped(
         let a_token = cancel_token.clone();
         let a_handle = tokio::spawn(async move {
             let file = tokio::fs::OpenOptions::new()
+                .read(true)
                 .write(true)
                 .open(&a_path)
                 .await
@@ -425,8 +431,22 @@ pub async fn mux_streams_piped(
             tokio::spawn(async move { Ok::<u64, EngineError>(0) })
         };
 
-        let (v_res, a_res, stdout_res, status_res) =
-            tokio::join!(v_handle, a_handle, stdout_handle, child.wait());
+        let wait_fut = async {
+            let (v_res, a_res, stdout_res) = tokio::join!(v_handle, a_handle, stdout_handle);
+            let status = child.wait().await;
+            (v_res, a_res, stdout_res, status)
+        };
+
+        let (v_res, a_res, stdout_res, status_res) = tokio::select! {
+            _ = cancel_token.cancelled() => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = tokio::fs::remove_file(&v_fifo).await;
+                let _ = tokio::fs::remove_file(&a_fifo).await;
+                return Err(EngineError::Cancelled);
+            }
+            res = wait_fut => res,
+        };
 
         let _ = tokio::fs::remove_file(&v_fifo).await;
         let _ = tokio::fs::remove_file(&a_fifo).await;
