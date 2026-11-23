@@ -44,6 +44,15 @@ pub enum EngineError {
 
     #[error("Concurrency error: {0}")]
     ConcurrencyError(String),
+
+    #[error("OS API error: {0}")]
+    OsApiError(String),
+
+    #[error("File system error: {0}")]
+    FileSystemError(String),
+
+    #[error("Decryption error: {0}")]
+    DecryptionError(String),
 }
 
 impl From<std::io::Error> for EngineError {
