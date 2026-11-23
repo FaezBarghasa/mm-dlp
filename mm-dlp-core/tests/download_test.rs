@@ -195,8 +195,27 @@ async fn test_direct_download_with_no_part_flag() {
 
 #[tokio::test]
 async fn test_engine_no_overwrites_behavior() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let response =
+                        "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: 12\r\nConnection: close\r\n\r\nserver_video";
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        }
+    });
+
     let temp_dir = std::env::temp_dir();
-    let existing_file = temp_dir.join("existing_track [no_ovw_123].mp3");
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let target_filename = format!("sample {}.mp4", id);
+    let existing_file = temp_dir.join(&target_filename);
     tokio::fs::write(&existing_file, b"pre-existing content")
         .await
         .unwrap();
@@ -209,7 +228,7 @@ async fn test_engine_no_overwrites_behavior() {
 
     let options = mm_dlp_core::engine::MediaDownloadOptions {
         output_dir: temp_dir.to_string_lossy().to_string(),
-        output_template: "%(title)s [%(id)s].%(ext)s".into(),
+        output_template: "%(title)s.%(ext)s".into(),
         no_overwrites: true,
         ..Default::default()
     };
@@ -222,11 +241,11 @@ async fn test_engine_no_overwrites_behavior() {
         fn on_complete(&self, _res: mm_dlp_core::DownloadResult) {}
     }
 
-    let url = "https://soundcloud.com/artist/existing_track";
+    let url = format!("http://127.0.0.1:{}/sample_{}.mp4", port, id);
     let res = engine
         .download_media(
             "task_ovw".into(),
-            url.into(),
+            url,
             options,
             std::sync::Arc::new(TestCallback),
         )
