@@ -16,7 +16,7 @@ pub mod mmap;
 pub mod parallel;
 pub mod torrent;
 
-pub use limiter::{parse_rate_limit, RateLimiter};
+pub use limiter::{RateLimiter, parse_rate_limit};
 
 pub fn build_http_client() -> Result<Client, EngineError> {
     build_http_client_with_config(&crate::config::EngineConfig::default())
@@ -427,7 +427,10 @@ pub async fn download_resumable_to_file(
             Err(e) => {
                 attempts += 1;
                 if attempts >= 3 {
-                    return Err(EngineError::Network(format!("Network request failed: {}", e)));
+                    return Err(EngineError::Network(format!(
+                        "Network request failed: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -437,14 +440,9 @@ pub async fn download_resumable_to_file(
     let is_partial = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
     let initial_offset = if is_partial { existing_bytes } else { 0 };
 
-    let downloaded = stream_to_file_with_options(
-        response,
-        target_path,
-        cancel_token,
-        no_part,
-        rate_limiter,
-    )
-    .await?;
+    let downloaded =
+        stream_to_file_with_options(response, target_path, cancel_token, no_part, rate_limiter)
+            .await?;
 
     Ok(initial_offset + downloaded)
 }

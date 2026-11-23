@@ -153,7 +153,8 @@ async fn test_direct_download_with_no_part_flag() {
                 tokio::spawn(async move {
                     let mut buf = [0; 2048];
                     let _ = socket.read(&mut buf).await;
-                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+                    let response =
+                        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
                     let _ = socket.write_all(response.as_bytes()).await;
                 });
             }
@@ -180,7 +181,10 @@ async fn test_direct_download_with_no_part_flag() {
     .expect("Direct download failed");
 
     assert_eq!(total, 5);
-    assert!(!part_path.exists(), ".part file should never exist when no_part=true");
+    assert!(
+        !part_path.exists(),
+        ".part file should never exist when no_part=true"
+    );
     assert!(target_path.exists());
 
     let content = tokio::fs::read(&target_path).await.unwrap();

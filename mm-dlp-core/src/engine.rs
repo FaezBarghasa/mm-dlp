@@ -12,7 +12,7 @@ pub use crate::downloader::hls::HlsDownloader;
 use crate::downloader::parallel::SequencedChunk;
 pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
 use crate::downloader::{
-    build_http_client_with_config, download_resumable_to_file, RateLimiter,
+    RateLimiter, build_http_client_with_config, download_resumable_to_file, fetch_with_fallback,
 };
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;

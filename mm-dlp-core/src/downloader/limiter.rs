@@ -14,15 +14,24 @@ pub fn parse_rate_limit(input: &str) -> Result<u64, EngineError> {
 
     let upper = s.to_uppercase();
     let (num_str, multiplier) = if upper.ends_with("GIB") || upper.ends_with("GB") {
-        (&s[..s.len() - if upper.ends_with("GIB") { 3 } else { 2 }], 1024 * 1024 * 1024u64)
+        (
+            &s[..s.len() - if upper.ends_with("GIB") { 3 } else { 2 }],
+            1024 * 1024 * 1024u64,
+        )
     } else if upper.ends_with('G') {
         (&s[..s.len() - 1], 1024 * 1024 * 1024u64)
     } else if upper.ends_with("MIB") || upper.ends_with("MB") {
-        (&s[..s.len() - if upper.ends_with("MIB") { 3 } else { 2 }], 1024 * 1024u64)
+        (
+            &s[..s.len() - if upper.ends_with("MIB") { 3 } else { 2 }],
+            1024 * 1024u64,
+        )
     } else if upper.ends_with('M') {
         (&s[..s.len() - 1], 1024 * 1024u64)
     } else if upper.ends_with("KIB") || upper.ends_with("KB") {
-        (&s[..s.len() - if upper.ends_with("KIB") { 3 } else { 2 }], 1024u64)
+        (
+            &s[..s.len() - if upper.ends_with("KIB") { 3 } else { 2 }],
+            1024u64,
+        )
     } else if upper.ends_with('K') {
         (&s[..s.len() - 1], 1024u64)
     } else if upper.ends_with('B') {
@@ -114,7 +123,10 @@ mod tests {
         assert_eq!(parse_rate_limit("500000").unwrap(), 500_000);
         assert_eq!(parse_rate_limit("50K").unwrap(), 50 * 1024);
         assert_eq!(parse_rate_limit("50k").unwrap(), 50 * 1024);
-        assert_eq!(parse_rate_limit("1.5M").unwrap(), (1.5 * 1024.0 * 1024.0) as u64);
+        assert_eq!(
+            parse_rate_limit("1.5M").unwrap(),
+            (1.5 * 1024.0 * 1024.0) as u64
+        );
         assert_eq!(parse_rate_limit("10MB").unwrap(), 10 * 1024 * 1024);
         assert_eq!(parse_rate_limit("1G").unwrap(), 1024 * 1024 * 1024);
     }
@@ -135,6 +147,10 @@ mod tests {
         // Acquire next 10 KB, which should force ~1s delay
         limiter.acquire(10_000).await;
         let elapsed = start.elapsed().as_millis();
-        assert!(elapsed >= 800, "Expected at least 800ms pacing, got {}ms", elapsed);
+        assert!(
+            elapsed >= 800,
+            "Expected at least 800ms pacing, got {}ms",
+            elapsed
+        );
     }
 }
