@@ -234,18 +234,27 @@ impl SequentialFlusher {
                 chunk_res = rx.recv() => {
                     match chunk_res {
                         Some(Ok(chunk)) => {
+                            self.current_buffered_bytes += chunk.data.len();
                             self.heap.push(chunk);
 
-                            if self.heap.len() > self.max_backlog {
+                            if self.heap.len() > self.max_backlog
+                                || self.current_buffered_bytes > self.max_buffer_bytes
+                            {
                                 return Err(EngineError::IoError(format!(
-                                    "SequentialFlusher live backlog exceeded maximum window of {} chunks waiting for index {}",
-                                    self.max_backlog, self.next_expected_index
+                                    "SequentialFlusher live backlog exceeded limits (chunks: {}/{}, bytes: {}/{} bytes) waiting for index {}",
+                                    self.heap.len(),
+                                    self.max_backlog,
+                                    self.current_buffered_bytes,
+                                    self.max_buffer_bytes,
+                                    self.next_expected_index
                                 )));
                             }
 
                             while let Some(top) = self.heap.peek() {
                                 if top.index == self.next_expected_index {
                                     if let Some(popped) = self.heap.pop() {
+                                        self.current_buffered_bytes =
+                                            self.current_buffered_bytes.saturating_sub(popped.data.len());
                                         total_bytes += popped.data.len() as u64;
                                         writer
                                             .write_all(&popped.data)

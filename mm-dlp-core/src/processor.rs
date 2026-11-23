@@ -269,6 +269,28 @@ pub async fn mux_streams_piped(
     audio_ext: &str,
     cancel_token: CancellationToken,
 ) -> Result<u64, EngineError> {
+    mux_streams_piped_with_buffer(
+        video_rx,
+        audio_rx,
+        output_path,
+        video_ext,
+        audio_ext,
+        cancel_token,
+        crate::downloader::flusher::default_streaming_buffer_size(),
+    )
+    .await
+}
+
+/// On-the-fly concurrent dual-stream muxing using kernel FIFOs with configurable buffer size.
+pub async fn mux_streams_piped_with_buffer(
+    video_rx: tokio::sync::mpsc::Receiver<Result<SequencedChunk, EngineError>>,
+    audio_rx: tokio::sync::mpsc::Receiver<Result<SequencedChunk, EngineError>>,
+    output_path: &Path,
+    video_ext: &str,
+    audio_ext: &str,
+    cancel_token: CancellationToken,
+    buffer_size_bytes: usize,
+) -> Result<u64, EngineError> {
     let ffmpeg_bin = resolve_ffmpeg_path()?;
     let is_stdout = output_path == Path::new("-");
 
