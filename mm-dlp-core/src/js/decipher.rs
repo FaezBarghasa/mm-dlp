@@ -53,6 +53,7 @@ pub struct JsDecipher {
 impl JsDecipher {
     pub fn new() -> Result<Self, EngineError> {
         let engine = SandboxJsEngine::new()?;
+        Ok(Self { engine })
         Ok(Self {
             engine,
             n_cache: Mutex::new(HashMap::new()),
@@ -130,10 +131,10 @@ impl JsDecipher {
         }
 
         // Fast-path: check memoization cache
-        if let Ok(guard) = self.n_cache.lock() {
-            if let Some(cached) = guard.get(n_token) {
-                return Ok(cached.clone());
-            }
+        if let Ok(guard) = self.n_cache.lock()
+            && let Some(cached) = guard.get(n_token)
+        {
+            return Ok(cached.clone());
         }
 
         // Pattern 1: .get("n") entry point patterns in YouTube base.js
@@ -160,12 +161,13 @@ impl JsDecipher {
                         let arr_re = Regex::new(&format!(
                             r#"(?:var\s+)?{}\s*=\s*\[\s*([a-zA-Z0-9$]+)\s*\]"#,
                             regex::escape(name)
-                        )).map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
-                        if let Some(arr_cap) = arr_re.captures(js_payload) {
-                            if let Some(real_fn) = arr_cap.get(1) {
-                                candidate_name = Some(real_fn.as_str().to_string());
-                                break;
-                            }
+                        ))
+                        .map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
+                        if let Some(arr_cap) = arr_re.captures(js_payload)
+                            && let Some(real_fn) = arr_cap.get(1)
+                        {
+                            candidate_name = Some(real_fn.as_str().to_string());
+                            break;
                         }
                     }
                     candidate_name = Some(name.to_string());
@@ -180,15 +182,20 @@ impl JsDecipher {
                 // Fallback: look for standard obfuscated function splitting param and returning join("")
                 let fallback_re = Regex::new(r#"(?x)
                     (?:var\s+)?(?P<func>[a-zA-Z0-9$]+)\s*=\s*function\(\s*(?P<param>[a-zA-Z0-9$]+)\s*\)\s*\{
-                        \s*(?:var\s+)?(?P<param2>[a-zA-Z0-9$]+)\s*=\s*(?P=param)\.split\(""\);\s*
+                        \s*(?:var\s+)?(?P<param2>[a-zA-Z0-9$]+)\s*=\s*[a-zA-Z0-9$]+\.split\(""\);\s*
                         [\s\S]+?
-                        return\s+(?P=param2)\.join\(""\);?\s*
+                        return\s+[a-zA-Z0-9$]+\.join\(""\);?\s*
                     \}
                 "#).map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
 
-                fallback_re.captures(js_payload)
+                fallback_re
+                    .captures(js_payload)
                     .and_then(|c| c.name("func").map(|m| m.as_str().to_string()))
-                    .ok_or_else(|| EngineError::StreamNotFound("Failed to find n-challenge function in JS payload".to_string()))?
+                    .ok_or_else(|| {
+                        EngineError::StreamNotFound(
+                            "Failed to find n-challenge function in JS payload".to_string(),
+                        )
+                    })?
             }
         };
 
@@ -205,9 +212,9 @@ impl JsDecipher {
                 .or_else(|| caps.name("p2"))
                 .map(|m| m.as_str())
                 .unwrap_or("a");
-            let full_match = caps.get(0).ok_or_else(|| {
-                EngineError::StreamNotFound("Regex match error".to_string())
-            })?;
+            let full_match = caps
+                .get(0)
+                .ok_or_else(|| EngineError::StreamNotFound("Regex match error".to_string()))?;
             let brace_pos = full_match.end() - 1;
             let block = extract_brace_block(js_payload, brace_pos).ok_or_else(|| {
                 EngineError::StreamNotFound(format!(
@@ -243,14 +250,15 @@ impl JsDecipher {
                     let obj_re = Regex::new(&format!(
                         r#"(?x)(?:var\s+)?{}\s*=\s*\{{"#,
                         regex::escape(h_name)
-                    )).map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
+                    ))
+                    .map_err(|e| EngineError::StreamNotFound(e.to_string()))?;
 
-                    if let Some(obj_cap) = obj_re.captures(js_payload) {
-                        if let Some(obj_full) = obj_cap.get(0) {
-                            let brace_pos = obj_full.end() - 1;
-                            if let Some(obj_body) = extract_brace_block(js_payload, brace_pos) {
-                                helper_defs.push(format!("var {} = {};", h_name, obj_body));
-                            }
+                    if let Some(obj_cap) = obj_re.captures(js_payload)
+                        && let Some(obj_full) = obj_cap.get(0)
+                    {
+                        let brace_pos = obj_full.end() - 1;
+                        if let Some(obj_body) = extract_brace_block(js_payload, brace_pos) {
+                            helper_defs.push(format!("var {} = {};", h_name, obj_body));
                         }
                     }
                 }
@@ -267,9 +275,9 @@ impl JsDecipher {
             func_name
         );
 
-        let result = self
-            .engine
-            .execute_decipher(&compiled_script, n_token, "__mm_dlp_n_solver")?;
+        let result =
+            self.engine
+                .execute_decipher(&compiled_script, n_token, "__mm_dlp_n_solver")?;
 
         if let Ok(mut guard) = self.n_cache.lock() {
             guard.insert(n_token.to_string(), result.clone());

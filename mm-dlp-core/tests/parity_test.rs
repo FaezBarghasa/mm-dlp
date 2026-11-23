@@ -639,3 +639,75 @@ async fn test_phase2_fragment_resilience_and_downloaders() {
         .with_skip_unavailable(true);
     drop(dash);
 }
+
+#[tokio::test]
+async fn test_phase3_youtube_n_challenge_decipher_and_parity() {
+    use mm_dlp_core::extractor::youtube::YouTubeExtractor;
+    use mm_dlp_core::js::decipher::JsDecipher;
+    use serde_json::json;
+
+    let mock_js = r#"
+        var myHelper = {
+            rev: function(a) { a.reverse(); },
+            swp: function(a, b) { var c = a[0]; a[0] = a[b % a.length]; a[b % a.length] = c; }
+        };
+        var solveN = function(a) {
+            var b = a.split("");
+            myHelper.rev(b);
+            myHelper.swp(b, 2);
+            return b.join("");
+        };
+        var entry = a.get("n") && (b = solveN(b));
+    "#;
+
+    let decipherer = JsDecipher::new().expect("Failed to initialize JsDecipher");
+    // "abcdefg" reversed -> "gfedcba"; swap b[0] and b[2] ('g' and 'e') -> "efgdcba"
+    let deciphered_n = decipherer
+        .decipher_n(mock_js, "abcdefg")
+        .expect("Decipher n failed");
+    assert_eq!(deciphered_n, "efgdcba");
+
+    // Test memoization cache
+    let cached_n = decipherer
+        .decipher_n(mock_js, "abcdefg")
+        .expect("Decipher n from cache failed");
+    assert_eq!(cached_n, "efgdcba");
+
+    // Test YouTubeExtractor::transform_n_parameter
+    let test_url = "https://rr1.googlevideo.com/videoplayback?expire=123&n=abcdefg&sparams=expire";
+    let transformed_url = YouTubeExtractor::transform_n_parameter(&decipherer, mock_js, test_url);
+    assert_eq!(
+        transformed_url,
+        "https://rr1.googlevideo.com/videoplayback?expire=123&n=efgdcba&sparams=expire"
+    );
+
+    // Test YouTubeExtractor::requires_js_processing
+    let json_with_n = json!({
+        "adaptiveFormats": [
+            {
+                "itag": 140,
+                "url": "https://rr1.googlevideo.com/videoplayback?itag=140&n=abcdefg",
+                "mimeType": "audio/mp4; codecs=\"mp4a.40.2\""
+            }
+        ]
+    });
+    assert!(YouTubeExtractor::requires_js_processing(&json_with_n));
+
+    let json_without_js = json!({
+        "formats": [
+            {
+                "itag": 18,
+                "url": "https://example.com/direct.mp4",
+                "mimeType": "video/mp4"
+            }
+        ]
+    });
+    assert!(!YouTubeExtractor::requires_js_processing(&json_without_js));
+
+    // Test YouTubeExtractor::parse_formats full pipeline
+    let extractor = YouTubeExtractor::new();
+    let formats = extractor.parse_formats(&json_with_n, Some((&decipherer, mock_js)));
+    assert_eq!(formats.len(), 1);
+    assert!(formats[0].url.contains("n=efgdcba"));
+    assert!(!formats[0].url.contains("n=abcdefg"));
+}

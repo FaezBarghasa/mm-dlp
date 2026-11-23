@@ -304,32 +304,31 @@ impl YouTubeExtractor {
             if item["signatureCipher"].is_string() || item["cipher"].is_string() {
                 return true;
             }
-            if let Some(url) = item["url"].as_str() {
-                if url.contains("n=") || url.contains("&n=") || url.contains("?n=") {
-                    return true;
-                }
+            if let Some(url) = item["url"].as_str()
+                && (url.contains("n=") || url.contains("&n=") || url.contains("?n="))
+            {
+                return true;
             }
             false
         };
 
-        if let Some(muxed) = streaming_data["formats"].as_array() {
-            if muxed.iter().any(check_format) {
-                return true;
-            }
+        if let Some(muxed) = streaming_data["formats"].as_array()
+            && muxed.iter().any(check_format)
+        {
+            return true;
         }
-        if let Some(adaptive) = streaming_data["adaptiveFormats"].as_array() {
-            if adaptive.iter().any(check_format) {
-                return true;
-            }
+        if let Some(adaptive) = streaming_data["adaptiveFormats"].as_array()
+            && adaptive.iter().any(check_format)
+        {
+            return true;
         }
         false
     }
 
     /// Transforms the `n` challenge query parameter in stream URL using the player JavaScript decipherer.
     pub fn transform_n_parameter(decipherer: &JsDecipher, js_code: &str, url_str: &str) -> String {
-        static N_PARAM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r#"(^|[?&])n=([^&]+)"#).expect("Invalid n regex")
-        });
+        static N_PARAM_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"(^|[?&])n=([^&]+)"#).expect("Invalid n regex"));
 
         let Some(caps) = N_PARAM_REGEX.captures(url_str) else {
             return url_str.to_string();
@@ -461,16 +460,9 @@ impl AsyncExtractor for YouTubeExtractor {
 
         let json = self.fetch_player_response(client, &video_id).await?;
 
-        // Check if any formats require cipher deciphering
-        let has_ciphers = json["streamingData"]["adaptiveFormats"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .any(|item| item["signatureCipher"].is_string() || item["cipher"].is_string())
-            })
-            .unwrap_or(false);
-
-        let js_code = if has_ciphers {
+        // Check if any formats require cipher deciphering or n-challenge solving
+        let requires_js = Self::requires_js_processing(&json["streamingData"]);
+        let js_code = if requires_js {
             self.fetch_player_js(client, &video_id).await
         } else {
             None
@@ -602,15 +594,8 @@ impl PlatformExtractor for YouTubeExtractor {
     ) -> Result<StreamCandidate, EngineError> {
         let json = self.fetch_player_response(client, track_id).await?;
 
-        let has_ciphers = json["streamingData"]["adaptiveFormats"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .any(|item| item["signatureCipher"].is_string() || item["cipher"].is_string())
-            })
-            .unwrap_or(false);
-
-        let js_code = if has_ciphers {
+        let requires_js = Self::requires_js_processing(&json["streamingData"]);
+        let js_code = if requires_js {
             self.fetch_player_js(client, track_id).await
         } else {
             None
@@ -787,5 +772,70 @@ mod tests {
         let format = &formats[0];
         assert_eq!(format.format_id, "251");
         assert!(format.url.contains("sig=efgdcba"));
+    }
+
+    #[test]
+    fn test_parse_formats_with_n_challenge() {
+        let mock_streaming_data = json!({
+            "formats": [
+                {
+                    "itag": 18,
+                    "url": "https://rr1.googlevideo.com/videoplayback?itag=18&n=12345&expire=9999",
+                    "mimeType": "video/mp4; codecs=\"avc1.42001E, mp4a.40.2\"",
+                    "bitrate": 500000
+                }
+            ],
+            "adaptiveFormats": [
+                {
+                    "itag": 251,
+                    "signatureCipher": "s=abcdefg&sp=sig&url=https%3A%2F%2Frr.googlevideo.com%2Fvideoplayback%3Fitag%3D251%26n%3D12345",
+                    "mimeType": "audio/webm; codecs=\"opus\"",
+                    "bitrate": 160000
+                }
+            ]
+        });
+
+        let mock_js = r#"
+            var helperObj = {
+                reverse: function(a) { a.reverse(); },
+                swap: function(a, b) { var c = a[0]; a[0] = a[b % a.length]; a[b % a.length] = c; },
+                splice: function(a, b) { a.splice(0, b); }
+            };
+            var decipherFn = function(a) {
+                var b = a.split("");
+                helperObj.reverse(b);
+                helperObj.swap(b, 2);
+                return b.join("");
+            };
+            var nFunc = function(a) {
+                var b = a.split("");
+                helperObj.reverse(b);
+                helperObj.swap(b, 1);
+                return b.join("");
+            };
+            var entry = a.get("n") && (b = nFunc(b));
+        "#;
+
+        let decipherer = JsDecipher::new().expect("Failed to initialize JsDecipher");
+        let extractor = YouTubeExtractor::new();
+        let formats = extractor.parse_formats(&mock_streaming_data, Some((&decipherer, mock_js)));
+
+        assert_eq!(formats.len(), 2);
+        // Direct format with n transformed from "12345" -> "45321"
+        let fmt18 = formats
+            .iter()
+            .find(|f| f.format_id == "18")
+            .expect("format 18");
+        assert!(fmt18.url.contains("n=45321"));
+        assert!(!fmt18.url.contains("n=12345"));
+
+        // Cipher format with both sig=efgdcba and n transformed from "12345" -> "45321"
+        let fmt251 = formats
+            .iter()
+            .find(|f| f.format_id == "251")
+            .expect("format 251");
+        assert!(fmt251.url.contains("sig=efgdcba"));
+        assert!(fmt251.url.contains("n=45321"));
+        assert!(!fmt251.url.contains("n=12345"));
     }
 }
