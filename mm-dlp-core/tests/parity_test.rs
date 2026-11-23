@@ -711,3 +711,49 @@ async fn test_phase3_youtube_n_challenge_decipher_and_parity() {
     assert!(formats[0].url.contains("n=efgdcba"));
     assert!(!formats[0].url.contains("n=abcdefg"));
 }
+
+#[tokio::test]
+async fn test_phase4_fork_bomb_prevention_and_container_codecs() {
+    use mm_dlp_core::extractor::fallback_bridge::FallbackBridgeExtractor;
+    use mm_dlp_core::processor::determine_mux_codecs;
+    use reqwest::Client;
+
+    // 1. Verify container-safe codec determination
+    let (v, a) = determine_mux_codecs("webm", "opus", "webm");
+    assert_eq!(v, vec!["-c:v", "copy"]);
+    assert_eq!(a, vec!["-c:a", "copy"]);
+
+    let (v, a) = determine_mux_codecs("mp4", "aac", "webm");
+    assert_eq!(v, vec!["-c:v", "libvpx-vp9"]);
+    assert_eq!(a, vec!["-c:a", "libopus"]);
+
+    let (v, a) = determine_mux_codecs("webm", "opus", "mp4");
+    assert_eq!(v, vec!["-c:v", "copy"]);
+    assert_eq!(a, vec!["-c:a", "aac"]);
+
+    let (v, a) = determine_mux_codecs("mp4", "aac", "mp4");
+    assert_eq!(v, vec!["-c:v", "copy"]);
+    assert_eq!(a, vec!["-c:a", "copy"]);
+
+    let (v, a) = determine_mux_codecs("mp4", "opus", "mkv");
+    assert_eq!(v, vec!["-c:v", "copy"]);
+    assert_eq!(a, vec!["-c:a", "copy"]);
+
+    // 2. Verify recursive fork-bomb prevention in FallbackBridgeExtractor
+    let extractor = FallbackBridgeExtractor::new();
+    let client = Client::new();
+
+    unsafe {
+        std::env::set_var("MM_DLP_FALLBACK_ACTIVE", "1");
+    }
+    let res = extractor
+        .extract_metadata(&client, "https://example.com/arbitrary_url")
+        .await;
+    unsafe {
+        std::env::remove_var("MM_DLP_FALLBACK_ACTIVE");
+    }
+
+    assert!(res.is_err());
+    let err_msg = res.unwrap_err().to_string();
+    assert!(err_msg.contains("Recursive fallback bridge invocation detected"));
+}

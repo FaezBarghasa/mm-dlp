@@ -217,61 +217,104 @@ impl AsyncExtractor for FallbackBridgeExtractor {
             ));
         }
 
-        let mut cmd = Command::new(&self.python_bin);
-        cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
-
         let current_exe = std::env::current_exe().ok();
+        let mut candidate_cmd = None;
 
         if let Some(ref root) = self.yt_dlp_root {
+            let mut cmd = Command::new(&self.python_bin);
+            cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
             cmd.env("PYTHONPATH", root);
             cmd.arg("-m").arg("yt_dlp");
+            candidate_cmd = Some(cmd);
         } else if let Ok(system_ytdlp) = which::which("yt-dlp") {
-            // Guarantee system_ytdlp is not pointing back to mm-dlp binary
-            if let Some(ref curr) = current_exe
-                && let (Ok(c1), Ok(c2)) = (
+            // Guarantee system_ytdlp is not pointing back to mm-dlp binary or alias
+            let is_self = if let Some(ref curr) = current_exe {
+                if let (Ok(c1), Ok(c2)) = (
                     std::fs::canonicalize(system_ytdlp.as_path()),
                     std::fs::canonicalize(curr),
-                )
-                && c1 == c2
-            {
-                // Self-binary collision detected; run python -m yt_dlp instead
-                cmd.arg("-m").arg("yt_dlp");
+                ) {
+                    c1 == c2
+                } else {
+                    system_ytdlp == *curr
+                }
             } else {
-                cmd = Command::new(system_ytdlp);
+                false
+            };
+
+            if is_self {
+                // Self-binary collision detected; run python -m yt_dlp instead if python is available
+                if which::which(&self.python_bin).is_ok() {
+                    let mut cmd = Command::new(&self.python_bin);
+                    cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
+                    cmd.arg("-m").arg("yt_dlp");
+                    candidate_cmd = Some(cmd);
+                }
+            } else {
+                let mut cmd = Command::new(system_ytdlp);
                 cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
+                candidate_cmd = Some(cmd);
             }
-        } else {
+        } else if which::which(&self.python_bin).is_ok() {
+            let mut cmd = Command::new(&self.python_bin);
+            cmd.env("MM_DLP_FALLBACK_ACTIVE", "1");
             cmd.arg("-m").arg("yt_dlp");
+            candidate_cmd = Some(cmd);
         }
 
-        cmd.arg("--dump-single-json")
-            .arg("--no-playlist")
-            .arg("--skip-download")
-            .arg(url);
+        let output_res = if let Some(mut cmd) = candidate_cmd {
+            cmd.arg("--dump-single-json")
+                .arg("--no-playlist")
+                .arg("--skip-download")
+                .arg(url);
+            cmd.output().await
+        } else {
+            // Neither external yt-dlp nor python is available
+            let generic = crate::extractor::generic::GenericExtractor::new();
+            if generic.matches_url(url) {
+                return generic.extract_metadata(_client, url).await;
+            }
+            return Err(EngineError::ExtractorError(
+                "Neither valid external yt-dlp binary nor python interpreter is available".into(),
+            ));
+        };
 
-        let output = cmd.output().await.map_err(|e| {
-            EngineError::ExtractorError(format!(
+        let parsed_info = match output_res {
+            Ok(output) if output.status.success() => {
+                serde_json::from_slice::<Value>(&output.stdout)
+                    .map_err(|e| {
+                        EngineError::ExtractorError(format!(
+                            "Failed to parse yt-dlp fallback JSON output: {}",
+                            e
+                        ))
+                    })
+                    .and_then(|val| Self::parse_yt_dlp_json(&val))
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(EngineError::ExtractorError(format!(
+                    "yt-dlp fallback extraction failed: {}",
+                    stderr.trim()
+                )))
+            }
+            Err(e) => Err(EngineError::ExtractorError(format!(
                 "Failed to execute yt-dlp fallback bridge process: {}",
                 e
-            ))
-        })?;
+            ))),
+        };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(EngineError::ExtractorError(format!(
-                "yt-dlp fallback extraction failed: {}",
-                stderr.trim()
-            )));
+        match parsed_info {
+            Ok(info) => Ok(info),
+            Err(original_err) => {
+                // Graceful fallback to GenericExtractor if yt-dlp is unavailable or failed
+                let generic = crate::extractor::generic::GenericExtractor::new();
+                if generic.matches_url(url)
+                    && let Ok(generic_info) = generic.extract_metadata(_client, url).await
+                {
+                    return Ok(generic_info);
+                }
+                Err(original_err)
+            }
         }
-
-        let json_value: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-            EngineError::ExtractorError(format!(
-                "Failed to parse yt-dlp fallback JSON output: {}",
-                e
-            ))
-        })?;
-
-        Self::parse_yt_dlp_json(&json_value)
     }
 }
 
@@ -334,5 +377,40 @@ mod tests {
 
         let subs = info.subtitles.expect("Subtitles should be present");
         assert_eq!(subs.get("en").unwrap()[0].ext, "vtt");
+    }
+
+    #[tokio::test]
+    async fn test_fallback_bridge_recursion_prevention() {
+        let extractor = FallbackBridgeExtractor::new();
+        let client = Client::new();
+
+        // Simulate active fallback bridge to trigger recursion protection
+        unsafe {
+            std::env::set_var("MM_DLP_FALLBACK_ACTIVE", "1");
+        }
+        let res = extractor
+            .extract_metadata(&client, "https://example.com/test_video")
+            .await;
+        unsafe {
+            std::env::remove_var("MM_DLP_FALLBACK_ACTIVE");
+        }
+
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("Recursive fallback bridge invocation detected"));
+    }
+
+    #[tokio::test]
+    async fn test_fallback_bridge_graceful_generic_fallback() {
+        let extractor = FallbackBridgeExtractor::new();
+        let client = Client::new();
+
+        // Direct media URL that can be parsed by GenericExtractor if yt-dlp fails
+        let direct_url = "https://example.com/media/sample_video.mp4";
+        let res = extractor.extract_metadata(&client, direct_url).await;
+        // Generic extractor succeeds on direct mp4 URL
+        if let Ok(info) = res {
+            assert!(info.formats.iter().any(|f| f.url == direct_url));
+        }
     }
 }

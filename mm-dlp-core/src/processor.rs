@@ -194,6 +194,43 @@ pub fn tag_file_in_place(
     Ok(())
 }
 
+/// Determines container-safe FFmpeg video and audio codec arguments to avoid illegal codec container errors.
+pub fn determine_mux_codecs(
+    video_ext: &str,
+    audio_ext: &str,
+    out_ext: &str,
+) -> (Vec<&'static str>, Vec<&'static str>) {
+    let v_clean = video_ext.trim_start_matches('.').to_lowercase();
+    let a_clean = audio_ext.trim_start_matches('.').to_lowercase();
+    let out_clean = out_ext.trim_start_matches('.').to_lowercase();
+
+    match out_clean.as_str() {
+        "webm" => {
+            let v_args = if matches!(v_clean.as_str(), "webm" | "vp9" | "vp8" | "av1") {
+                vec!["-c:v", "copy"]
+            } else {
+                vec!["-c:v", "libvpx-vp9"]
+            };
+            let a_args = if matches!(a_clean.as_str(), "webm" | "opus") {
+                vec!["-c:a", "copy"]
+            } else {
+                vec!["-c:a", "libopus"]
+            };
+            (v_args, a_args)
+        }
+        "mkv" => (vec!["-c:v", "copy"], vec!["-c:a", "copy"]),
+        _ => {
+            let v_args = vec!["-c:v", "copy"];
+            let a_args = if matches!(a_clean.as_str(), "m4a" | "aac") {
+                vec!["-c:a", "copy"]
+            } else {
+                vec!["-c:a", "aac"]
+            };
+            (v_args, a_args)
+        }
+    }
+}
+
 pub async fn mux_streams_to_file(
     video_path: &Path,
     audio_path: &Path,
@@ -206,44 +243,27 @@ pub async fn mux_streams_to_file(
         .arg("-i")
         .arg(video_path)
         .arg("-i")
-        .arg(audio_path)
-        .arg("-c:v")
-        .arg("copy");
+        .arg(audio_path);
 
     let out_ext = output_path
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
+        .unwrap_or("");
+    let video_ext = video_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
     let audio_ext = audio_path
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+        .unwrap_or("");
 
-    match out_ext.as_str() {
-        "webm" => {
-            if audio_ext == "webm" || audio_ext == "opus" {
-                cmd.arg("-c:a").arg("copy");
-            } else {
-                cmd.arg("-c:a").arg("libopus");
-            }
-        }
-        "mp4" | "m4v" | "m4a" => {
-            if audio_ext == "m4a" || audio_ext == "aac" {
-                cmd.arg("-c:a").arg("copy");
-            } else {
-                cmd.arg("-c:a").arg("aac");
-            }
-        }
-        "mkv" => {
-            cmd.arg("-c:a").arg("copy");
-        }
-        _ => {
-            // General fallback: try copy first, ffmpeg will transcode if impossible
-            cmd.arg("-c:a").arg("copy");
-        }
+    let (v_codecs, a_codecs) = determine_mux_codecs(video_ext, audio_ext, out_ext);
+    for arg in v_codecs {
+        cmd.arg(arg);
+    }
+    for arg in a_codecs {
+        cmd.arg(arg);
     }
 
     cmd.arg(output_path);
@@ -349,16 +369,16 @@ pub async fn mux_streams_piped_with_buffer(
 
         let mut cmd = Command::new(&ffmpeg_bin);
         cmd.kill_on_drop(true);
-        cmd.arg("-y")
-            .arg("-i")
-            .arg(&v_fifo)
-            .arg("-i")
-            .arg(&a_fifo)
-            .arg("-c:v")
-            .arg("copy");
+        cmd.arg("-y").arg("-i").arg(&v_fifo).arg("-i").arg(&a_fifo);
 
         let out_ext = if is_stdout {
-            if video_ext == "webm" { "webm" } else { "mp4" }
+            if video_ext == "webm" {
+                "webm"
+            } else if video_ext == "mkv" {
+                "mkv"
+            } else {
+                "mp4"
+            }
         } else {
             output_path
                 .extension()
@@ -366,26 +386,19 @@ pub async fn mux_streams_piped_with_buffer(
                 .unwrap_or(video_ext)
         };
 
-        match out_ext {
-            "webm" => {
-                if audio_ext == "webm" || audio_ext == "opus" {
-                    cmd.arg("-c:a").arg("copy");
-                } else {
-                    cmd.arg("-c:a").arg("libopus");
-                }
-            }
-            _ => {
-                if audio_ext == "m4a" || audio_ext == "aac" {
-                    cmd.arg("-c:a").arg("copy");
-                } else {
-                    cmd.arg("-c:a").arg("aac");
-                }
-            }
+        let (v_codecs, a_codecs) = determine_mux_codecs(video_ext, audio_ext, out_ext);
+        for arg in v_codecs {
+            cmd.arg(arg);
+        }
+        for arg in a_codecs {
+            cmd.arg(arg);
         }
 
         if is_stdout {
             if out_ext == "webm" {
                 cmd.arg("-f").arg("webm");
+            } else if out_ext == "mkv" {
+                cmd.arg("-f").arg("matroska");
             } else {
                 cmd.arg("-f")
                     .arg("mp4")
@@ -643,5 +656,53 @@ pub async fn extract_audio_from_file(
             "ffmpeg audio extraction exited with status: {}",
             status
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_determine_mux_codecs_webm() {
+        // VP9 + Opus -> copy/copy
+        let (v, a) = determine_mux_codecs("webm", "opus", "webm");
+        assert_eq!(v, vec!["-c:v", "copy"]);
+        assert_eq!(a, vec!["-c:a", "copy"]);
+
+        // MP4 (H.264) + AAC -> transcode video to VP9 and audio to libopus
+        let (v, a) = determine_mux_codecs("mp4", "aac", "webm");
+        assert_eq!(v, vec!["-c:v", "libvpx-vp9"]);
+        assert_eq!(a, vec!["-c:a", "libopus"]);
+
+        // MP4 (H.264) + Opus -> transcode video to VP9 and copy Opus audio
+        let (v, a) = determine_mux_codecs("mp4", "opus", "webm");
+        assert_eq!(v, vec!["-c:v", "libvpx-vp9"]);
+        assert_eq!(a, vec!["-c:a", "copy"]);
+    }
+
+    #[test]
+    fn test_determine_mux_codecs_mp4() {
+        // MP4 + M4A (AAC) -> copy/copy
+        let (v, a) = determine_mux_codecs("mp4", "m4a", "mp4");
+        assert_eq!(v, vec!["-c:v", "copy"]);
+        assert_eq!(a, vec!["-c:a", "copy"]);
+
+        // WebM + Opus -> copy video, transcode audio to aac
+        let (v, a) = determine_mux_codecs("webm", "opus", "mp4");
+        assert_eq!(v, vec!["-c:v", "copy"]);
+        assert_eq!(a, vec!["-c:a", "aac"]);
+    }
+
+    #[test]
+    fn test_determine_mux_codecs_mkv() {
+        // Any codec combination into MKV -> lossless copy/copy
+        let (v, a) = determine_mux_codecs("webm", "opus", "mkv");
+        assert_eq!(v, vec!["-c:v", "copy"]);
+        assert_eq!(a, vec!["-c:a", "copy"]);
+
+        let (v, a) = determine_mux_codecs("mp4", "aac", "mkv");
+        assert_eq!(v, vec!["-c:v", "copy"]);
+        assert_eq!(a, vec!["-c:a", "copy"]);
     }
 }
