@@ -398,8 +398,8 @@ impl MmDlpEngine {
                             "Extracting audio-only stream [{}] ({}) to target format {}",
                             audio.format_id, audio.ext, options.audio_format
                         ));
-                        let tmp_audio = output_dir_path
-                            .join(format!("{}.tmp.raw.a.{}", info.id, audio.ext));
+                        let tmp_audio =
+                            output_dir_path.join(format!("{}.tmp.raw.a.{}", info.id, audio.ext));
                         let a_bytes = self
                             .download_format_stream(
                                 audio,
@@ -429,89 +429,90 @@ impl MmDlpEngine {
                             video.format_id, audio.format_id
                         ));
 
-                    // Use on-the-fly piped muxing (zero disk files for stdout, 50% less I/O for disk)
-                    let (v_tx, v_rx) =
-                        tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
-                    let (a_tx, a_rx) =
-                        tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
+                        // Use on-the-fly piped muxing (zero disk files for stdout, 50% less I/O for disk)
+                        let (v_tx, v_rx) =
+                            tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
+                        let (a_tx, a_rx) =
+                            tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
 
-                    let v_fut = self.stream_format_to_channel(
-                        video,
-                        v_tx,
-                        options.concurrent_fragments,
-                        cancel_token.clone(),
-                    );
-                    let a_fut = self.stream_format_to_channel(
-                        audio,
-                        a_tx,
-                        options.concurrent_fragments,
-                        cancel_token.clone(),
-                    );
-                    let buffer_bytes = options
-                        .buffer_size_bytes
-                        .unwrap_or_else(crate::downloader::flusher::default_streaming_buffer_size);
-                    let mux_fut = mux_streams_piped_with_buffer(
-                        v_rx,
-                        a_rx,
-                        &final_target_path,
-                        &video.ext,
-                        &audio.ext,
-                        cancel_token.clone(),
-                        buffer_bytes,
-                    );
+                        let v_fut = self.stream_format_to_channel(
+                            video,
+                            v_tx,
+                            options.concurrent_fragments,
+                            cancel_token.clone(),
+                        );
+                        let a_fut = self.stream_format_to_channel(
+                            audio,
+                            a_tx,
+                            options.concurrent_fragments,
+                            cancel_token.clone(),
+                        );
+                        let buffer_bytes = options.buffer_size_bytes.unwrap_or_else(
+                            crate::downloader::flusher::default_streaming_buffer_size,
+                        );
+                        let mux_fut = mux_streams_piped_with_buffer(
+                            v_rx,
+                            a_rx,
+                            &final_target_path,
+                            &video.ext,
+                            &audio.ext,
+                            cancel_token.clone(),
+                            buffer_bytes,
+                        );
 
-                    let (v_res, a_res, mux_res) = tokio::join!(v_fut, a_fut, mux_fut);
+                        let (v_res, a_res, mux_res) = tokio::join!(v_fut, a_fut, mux_fut);
 
-                    match mux_res {
-                        Ok(bytes) => {
-                            let _ = v_res;
-                            let _ = a_res;
-                            total_bytes += bytes;
-                        }
-                        Err(mux_err) => {
-                            if is_stdout {
-                                return Err(mux_err);
+                        match mux_res {
+                            Ok(bytes) => {
+                                let _ = v_res;
+                                let _ = a_res;
+                                total_bytes += bytes;
                             }
-                            // Fallback to sequential disk download & mux if piped muxing fails
-                            callback_run.on_status(
-                                "Piped muxing fallback to sequential disk muxing".into(),
-                            );
-                            let tmp_video =
-                                output_dir_path.join(format!("{}.tmp.v.{}", info.id, video.ext));
-                            let tmp_audio =
-                                output_dir_path.join(format!("{}.tmp.a.{}", info.id, audio.ext));
+                            Err(mux_err) => {
+                                if is_stdout {
+                                    return Err(mux_err);
+                                }
+                                // Fallback to sequential disk download & mux if piped muxing fails
+                                callback_run.on_status(
+                                    "Piped muxing fallback to sequential disk muxing".into(),
+                                );
+                                let tmp_video = output_dir_path
+                                    .join(format!("{}.tmp.v.{}", info.id, video.ext));
+                                let tmp_audio = output_dir_path
+                                    .join(format!("{}.tmp.a.{}", info.id, audio.ext));
 
-                            let v_bytes = self
-                                .download_format_stream(
-                                    video,
-                                    &tmp_video,
-                                    options.concurrent_fragments,
-                                    cancel_token.clone(),
-                                )
-                                .await?;
-                            total_bytes += v_bytes;
+                                let v_bytes = self
+                                    .download_format_stream(
+                                        video,
+                                        &tmp_video,
+                                        options.concurrent_fragments,
+                                        cancel_token.clone(),
+                                    )
+                                    .await?;
+                                total_bytes += v_bytes;
 
-                            let a_bytes = self
-                                .download_format_stream(
-                                    audio,
-                                    &tmp_audio,
-                                    options.concurrent_fragments,
-                                    cancel_token.clone(),
-                                )
-                                .await?;
-                            total_bytes += a_bytes;
+                                let a_bytes = self
+                                    .download_format_stream(
+                                        audio,
+                                        &tmp_audio,
+                                        options.concurrent_fragments,
+                                        cancel_token.clone(),
+                                    )
+                                    .await?;
+                                total_bytes += a_bytes;
 
-                            if let Err(e) =
-                                mux_streams_to_file(&tmp_video, &tmp_audio, &final_target_path)
-                                    .await
-                            {
+                                if let Err(e) =
+                                    mux_streams_to_file(&tmp_video, &tmp_audio, &final_target_path)
+                                        .await
+                                {
+                                    let _ = tokio::fs::remove_file(&tmp_video).await;
+                                    let _ = tokio::fs::remove_file(&tmp_audio).await;
+                                    return Err(e);
+                                }
+
                                 let _ = tokio::fs::remove_file(&tmp_video).await;
                                 let _ = tokio::fs::remove_file(&tmp_audio).await;
-                                return Err(e);
                             }
-
-                            let _ = tokio::fs::remove_file(&tmp_video).await;
-                            let _ = tokio::fs::remove_file(&tmp_audio).await;
                         }
                     }
                 }

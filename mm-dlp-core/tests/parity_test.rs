@@ -394,18 +394,36 @@ async fn test_custom_dns_configuration_and_fallback() {
     use mm_dlp_core::downloader::build_http_client_with_config;
 
     let defaults = default_dns_servers();
-    assert_eq!(defaults[0], "1.1.1.1:53".parse().unwrap());
-    assert_eq!(defaults[1], "9.9.9.9:53".parse().unwrap());
+    assert_eq!(
+        defaults[0],
+        "1.1.1.1:53".parse::<std::net::SocketAddr>().unwrap()
+    );
+    assert_eq!(
+        defaults[1],
+        "9.9.9.9:53".parse::<std::net::SocketAddr>().unwrap()
+    );
 
     let custom = parse_dns_servers("8.8.8.8, 9.9.9.9:53; 1.1.1.1").unwrap();
     assert_eq!(custom.len(), 3);
-    assert_eq!(custom[0], "8.8.8.8:53".parse().unwrap());
-    assert_eq!(custom[1], "9.9.9.9:53".parse().unwrap());
-    assert_eq!(custom[2], "1.1.1.1:53".parse().unwrap());
+    assert_eq!(
+        custom[0],
+        "8.8.8.8:53".parse::<std::net::SocketAddr>().unwrap()
+    );
+    assert_eq!(
+        custom[1],
+        "9.9.9.9:53".parse::<std::net::SocketAddr>().unwrap()
+    );
+    assert_eq!(
+        custom[2],
+        "1.1.1.1:53".parse::<std::net::SocketAddr>().unwrap()
+    );
 
     let resolver = CustomDnsResolver::new(custom);
     let resolved = resolver.resolve_host("127.0.0.1", 443).await.unwrap();
-    assert_eq!(resolved[0], "127.0.0.1:443".parse().unwrap());
+    assert_eq!(
+        resolved[0],
+        "127.0.0.1:443".parse::<std::net::SocketAddr>().unwrap()
+    );
 
     // Verify engine builds successfully with custom DNS
     let mut config = EngineConfig::default();
@@ -540,4 +558,51 @@ fn test_safari_binarycookies_extraction_via_browser_extractor() {
     ));
 
     let _ = std::fs::remove_file(&file_path);
+}
+
+#[test]
+fn test_phase1_engine_config_options() {
+    use mm_dlp_core::config::EngineConfig;
+
+    let mut config = EngineConfig::default();
+    assert!(!config.dangerously_insecure);
+    assert!(config.custom_headers.is_none());
+
+    config.dangerously_insecure = true;
+    config.custom_headers = Some(vec![
+        "Authorization: Bearer test_secret".to_string(),
+        "X-Custom-Client: test_val".to_string(),
+    ]);
+
+    assert!(config.dangerously_insecure);
+    let headers = config.custom_headers.unwrap();
+    assert_eq!(headers.len(), 2);
+    assert_eq!(headers[0], "Authorization: Bearer test_secret");
+}
+
+#[tokio::test]
+async fn test_phase1_processor_audio_formats() {
+    use mm_dlp_core::processor::{
+        extract_audio_from_file, resolve_ffmpeg_path, transcode_stream_to_writer,
+    };
+    use std::path::Path;
+
+    if resolve_ffmpeg_path().is_err() {
+        return;
+    }
+
+    // Test channel setup and execution for transcode_stream_to_writer
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    drop(tx);
+
+    // Verify format mapping doesn't panic on valid phase 1 formats
+    let _ = transcode_stream_to_writer(rx, tokio::io::sink(), "best", false).await;
+
+    // Test extract_audio_from_file with mock non-existent file returning ffmpeg or IO error gracefully without panic
+    let p_in = Path::new("/tmp/non_existent_input.mp4");
+    let p_out = Path::new("/tmp/non_existent_output.mp3");
+    let _ = extract_audio_from_file(p_in, p_out, "m4a", "192k", false).await;
+    let _ = extract_audio_from_file(p_in, p_out, "opus", "best", false).await;
+    let _ = extract_audio_from_file(p_in, p_out, "flac", "best", false).await;
+    let _ = extract_audio_from_file(p_in, p_out, "wav", "best", false).await;
 }

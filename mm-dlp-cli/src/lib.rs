@@ -11,13 +11,15 @@ use std::sync::Arc;
 struct CliProgressCallback {
     has_completed: AtomicBool,
     is_stdout_stream: bool,
+    newline: bool,
 }
 
 impl CliProgressCallback {
-    fn new(is_stdout_stream: bool) -> Self {
+    fn new(is_stdout_stream: bool, newline: bool) -> Self {
         Self {
             has_completed: AtomicBool::new(false),
             is_stdout_stream,
+            newline,
         }
     }
 }
@@ -32,7 +34,13 @@ impl DownloadProgressCallback for CliProgressCallback {
     }
 
     fn on_progress(&self, progress_percentage: f64) {
-        if self.is_stdout_stream {
+        if self.newline {
+            if self.is_stdout_stream {
+                eprintln!("[download] {:>5.1}%", progress_percentage);
+            } else {
+                println!("[download] {:>5.1}%", progress_percentage);
+            }
+        } else if self.is_stdout_stream {
             eprint!("\r[download] {:>5.1}%", progress_percentage);
             let _ = std::io::stderr().flush();
         } else {
@@ -73,17 +81,17 @@ impl DownloadProgressCallback for CliProgressCallback {
     version,
     about = "High-performance drop-in replacement for yt-dlp with Tokio async engine"
 )]
-struct Cli {
+pub struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    pub command: Option<Commands>,
 
     /// Target URLs to download or inspect
     #[arg(value_name = "URL")]
-    urls: Vec<String>,
+    pub urls: Vec<String>,
 
     /// List all available formats for the given media URL(s)
     #[arg(short = 'F', long = "list-formats")]
-    list_formats: bool,
+    pub list_formats: bool,
 
     /// Video/audio format code or selector expression (e.g. "bestvideo+bestaudio/best", "ba", "137+140")
     #[arg(
@@ -91,7 +99,7 @@ struct Cli {
         long = "format",
         default_value = "bestvideo+bestaudio/best"
     )]
-    format: String,
+    pub format: String,
 
     /// Output filename template (e.g. "%(title)s [%(id)s].%(ext)s")
     #[arg(
@@ -99,147 +107,203 @@ struct Cli {
         long = "output",
         default_value = "%(title)s [%(id)s].%(ext)s"
     )]
-    output: String,
+    pub output: String,
 
     /// Output directory path
     #[arg(short = 'P', long = "paths", default_value = ".")]
-    paths: String,
+    pub paths: String,
 
     /// Dump JSON metadata for each video to stdout (single line per video)
     #[arg(short = 'j', long = "dump-json")]
-    dump_json: bool,
+    pub dump_json: bool,
 
     /// Dump single JSON metadata tree
     #[arg(short = 'J', long = "dump-single-json")]
-    dump_single_json: bool,
+    pub dump_single_json: bool,
 
     /// Print specific metadata field (e.g. "title", "id", "duration", "uploader")
     #[arg(long = "print")]
-    print_field: Option<String>,
+    pub print_field: Option<String>,
 
     /// Convert video files to audio-only files
     #[arg(short = 'x', long = "extract-audio")]
-    extract_audio: bool,
+    pub extract_audio: bool,
 
     /// Target audio format (best, mp3, aac, flac, m4a, opus, vorbis, wav)
     #[arg(long = "audio-format", default_value = "mp3")]
-    audio_format: String,
+    pub audio_format: String,
 
     /// Audio quality (0-9 for VBR, or bitrate e.g. 192k, 320k)
     #[arg(long = "audio-quality", default_value = "best")]
-    audio_quality: String,
+    pub audio_quality: String,
 
     /// Number of fragments/chunks to download simultaneously
     #[arg(short = 'N', long = "concurrent-fragments", default_value_t = 8)]
-    concurrent_fragments: usize,
+    pub concurrent_fragments: usize,
 
     /// Write thumbnail image to file
     #[arg(long = "write-thumbnail")]
-    write_thumbnail: bool,
+    pub write_thumbnail: bool,
 
     /// Embed thumbnail into media file
     #[arg(long = "embed-thumbnail")]
-    embed_thumbnail: bool,
+    pub embed_thumbnail: bool,
 
     /// Embed metadata into media file
     #[arg(long = "add-metadata", alias = "embed-metadata")]
-    embed_metadata: bool,
+    pub embed_metadata: bool,
 
     /// Netscape cookies file path
     #[arg(long = "cookies")]
-    cookies: Option<String>,
+    pub cookies: Option<String>,
 
     /// Do not download playlist, only the single video
     #[arg(long = "no-playlist")]
-    no_playlist: bool,
+    pub no_playlist: bool,
 
     /// Download entire playlist
     #[arg(long = "yes-playlist")]
-    yes_playlist: bool,
+    pub yes_playlist: bool,
 
     /// Write media stream directly to stdout without intermediate files (alias for -o -)
     #[arg(long = "stdout")]
-    stdout: bool,
+    pub stdout: bool,
 
     /// Apply EBU R128 real-time loudness normalization filter
     #[arg(long = "loudness-norm")]
-    loudness_norm: bool,
+    pub loudness_norm: bool,
 
     /// Print various debugging information
     #[arg(short = 'v', long = "verbose")]
-    verbose: bool,
+    pub verbose: bool,
 
     /// Activate quiet mode (suppress non-error output)
     #[arg(short = 'q', long = "quiet")]
-    quiet: bool,
+    pub quiet: bool,
 
     /// Suppress warning messages
     #[arg(long = "no-warnings")]
-    no_warnings: bool,
+    pub no_warnings: bool,
 
     /// Continue on download errors (do not exit immediately)
     #[arg(short = 'i', long = "ignore-errors")]
-    ignore_errors: bool,
+    pub ignore_errors: bool,
 
     /// Use the specified HTTP/HTTPS/SOCKS5 proxy
     #[arg(long = "proxy")]
-    proxy: Option<String>,
+    pub proxy: Option<String>,
 
     /// Load cookies from browser (e.g. chrome, firefox, brave, edge, safari)
     #[arg(long = "cookies-from-browser")]
-    cookies_from_browser: Option<String>,
+    pub cookies_from_browser: Option<String>,
 
     /// Custom User-Agent header
     #[arg(long = "user-agent")]
-    user_agent: Option<String>,
+    pub user_agent: Option<String>,
 
     /// Custom Referer header
     #[arg(long = "referer")]
-    referer: Option<String>,
+    pub referer: Option<String>,
 
     /// Read URLs to download from a batch file (one URL per line)
     #[arg(short = 'a', long = "batch-file")]
-    batch_file: Option<String>,
+    pub batch_file: Option<String>,
 
     /// Keep intermediate video file on disk after post-processing
     #[arg(short = 'k', long = "keep-video")]
-    keep_video: bool,
+    pub keep_video: bool,
 
     /// Do not overwrite existing output files
     #[arg(short = 'w', long = "no-overwrites")]
-    no_overwrites: bool,
+    pub no_overwrites: bool,
 
     /// Write subtitle file
     #[arg(long = "write-sub", alias = "write-subs")]
-    write_subs: bool,
+    pub write_subs: bool,
 
     /// Write automatically generated subtitle file
     #[arg(long = "write-auto-sub", alias = "write-auto-subs")]
-    write_auto_subs: bool,
+    pub write_auto_subs: bool,
 
     /// Languages of the subtitles to download (comma-separated or regex)
     #[arg(long = "sub-langs", alias = "sub-lang")]
-    sub_langs: Option<String>,
+    pub sub_langs: Option<String>,
 
     /// Embed subtitles into media file
     #[arg(long = "embed-subs", alias = "embed-sub")]
-    embed_subs: bool,
+    pub embed_subs: bool,
 
     /// Impersonate browser (e.g. "firefox", "gecko", "chrome")
     #[arg(long = "impersonate")]
-    impersonate: Option<String>,
+    pub impersonate: Option<String>,
 
     /// Custom DNS server(s) (comma-separated, e.g. "1.1.1.1,9.9.9.9" or "8.8.8.8"). Defaults to 1.1.1.1 with fallback to 9.9.9.9.
     #[arg(long = "dns", alias = "dns-servers")]
-    dns: Option<String>,
+    pub dns: Option<String>,
 
     /// Streaming buffer size in bytes or unit (e.g. "100M", "512M", "2G", "max"). Defaults to 100M on mobile, 512M on desktop.
     #[arg(long = "buffer-size", default_value = "default")]
-    buffer_size: String,
+    pub buffer_size: String,
+
+    /// Simulate, quiet but print direct media URL(s)
+    #[arg(short = 'g', long = "get-url")]
+    pub get_url: bool,
+
+    /// Simulate, quiet but print title
+    #[arg(short = 'e', long = "get-title")]
+    pub get_title: bool,
+
+    /// Simulate, quiet but print id
+    #[arg(long = "get-id")]
+    pub get_id: bool,
+
+    /// Simulate, quiet but print thumbnail URL
+    #[arg(long = "get-thumbnail")]
+    pub get_thumbnail: bool,
+
+    /// Simulate, quiet but print duration (in seconds)
+    #[arg(long = "get-duration")]
+    pub get_duration: bool,
+
+    /// Simulate, quiet but print output filename
+    #[arg(long = "get-filename")]
+    pub get_filename: bool,
+
+    /// Output progress bar as new lines (ideal for GUI frontends like Tartube, OpenVideoDownloader)
+    #[arg(long = "newline")]
+    pub newline: bool,
+
+    /// Do not download the video but write all related files (alias for --no-download)
+    #[arg(long = "skip-download", alias = "no-download")]
+    pub skip_download: bool,
+
+    /// Suppress HTTPS certificate validation
+    #[arg(long = "no-check-certificates", alias = "no-check-certificate")]
+    pub no_check_certificates: bool,
+
+    /// Do not use the Last-modified header to set the file modification time
+    #[arg(long = "no-mtime")]
+    pub no_mtime: bool,
+
+    /// Prefer free video/audio formats (webm, opus)
+    #[arg(long = "prefer-free-formats")]
+    pub prefer_free_formats: bool,
+
+    /// Abort downloading of further videos if an error occurs
+    #[arg(long = "abort-on-error")]
+    pub abort_on_error: bool,
+
+    /// Specify a custom HTTP header and its value, separated by a colon ':'
+    #[arg(
+        long = "add-header",
+        value_name = "FIELD:VALUE",
+        action = clap::ArgAction::Append
+    )]
+    pub add_header: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
-enum Commands {
+pub enum Commands {
     /// Extract and display all available formats and metadata for a given URL without downloading
     Info {
         /// Target URL (YouTube, Vimeo, SoundCloud, Spotify, Generic)
@@ -294,6 +358,10 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     config.cookies_from_browser = cli.cookies_from_browser.clone();
     config.impersonate_target = cli.impersonate.clone();
     config.dns_servers = cli.dns.clone();
+    config.dangerously_insecure = cli.no_check_certificates;
+    if !cli.add_header.is_empty() {
+        config.custom_headers = Some(cli.add_header.clone());
+    }
 
     if cli.verbose {
         if let Some(ref b) = cli.cookies_from_browser {
@@ -416,12 +484,139 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => {
                 eprintln!("[error] {}: {}", url, e);
                 has_failure = true;
-                if !cli.ignore_errors {
+                if cli.abort_on_error || !cli.ignore_errors {
                     std::process::exit(1);
                 }
                 continue;
             }
         };
+
+        let effective_format = if cli.extract_audio && cli.format == "bestvideo+bestaudio/best" {
+            "bestaudio/best".to_string()
+        } else if cli.prefer_free_formats && cli.format == "bestvideo+bestaudio/best" {
+            "bestvideo[ext=webm]+bestaudio[ext=opus]/best[ext=webm]/best".to_string()
+        } else {
+            cli.format.clone()
+        };
+
+        // Handle simulation queries (-e, --get-id, --get-thumbnail, --get-duration, --get-filename, -g)
+        let is_simulation = cli.get_title
+            || cli.get_id
+            || cli.get_thumbnail
+            || cli.get_duration
+            || cli.get_filename
+            || cli.get_url;
+
+        if is_simulation {
+            if cli.get_title {
+                println!("{}", info.title);
+            }
+            if cli.get_id {
+                println!("{}", info.id);
+            }
+            if cli.get_thumbnail {
+                if let Some(ref thumb) = info.thumbnail {
+                    println!("{}", thumb);
+                }
+            }
+            if cli.get_duration {
+                if let Some(dur) = info.duration {
+                    println!("{}", dur);
+                }
+            }
+            if cli.get_filename {
+                let sel = mm_dlp_core::extractor::format_selector::FormatSelector::select(
+                    &info,
+                    &effective_format,
+                );
+                let ext_str: String;
+                let ext = if cli.extract_audio {
+                    if cli.audio_format == "best" {
+                        match &sel {
+                            Ok(
+                                mm_dlp_core::extractor::format_selector::SelectedFormat::Merged {
+                                    audio,
+                                    ..
+                                },
+                            ) => audio.ext.as_str(),
+                            Ok(
+                                mm_dlp_core::extractor::format_selector::SelectedFormat::Single(
+                                    fmt,
+                                ),
+                            ) => {
+                                if fmt.is_audio_only() {
+                                    fmt.ext.as_str()
+                                } else {
+                                    "mp3"
+                                }
+                            }
+                            Err(_) => "mp3",
+                        }
+                    } else {
+                        &cli.audio_format
+                    }
+                } else {
+                    match &sel {
+                        Ok(s) => {
+                            ext_str = s.primary_ext().to_string();
+                            &ext_str
+                        }
+                        Err(_) => "mp4",
+                    }
+                };
+                let (h, w, fps, fid) = match &sel {
+                    Ok(mm_dlp_core::extractor::format_selector::SelectedFormat::Merged {
+                        video,
+                        ..
+                    }) => (
+                        video.height,
+                        video.width,
+                        video.fps,
+                        Some(video.format_id.as_str()),
+                    ),
+                    Ok(mm_dlp_core::extractor::format_selector::SelectedFormat::Single(fmt)) => {
+                        (fmt.height, fmt.width, fmt.fps, Some(fmt.format_id.as_str()))
+                    }
+                    Err(_) => (None, None, None, None),
+                };
+                let ctx = mm_dlp_core::utils::TemplateContext {
+                    id: &info.id,
+                    title: &info.title,
+                    uploader: info.uploader.as_deref(),
+                    ext,
+                    height: h,
+                    width: w,
+                    fps,
+                    format_id: fid,
+                };
+                let filename =
+                    mm_dlp_core::utils::expand_output_template_with_meta(&cli.output, &ctx);
+                println!("{}", filename);
+            }
+            if cli.get_url {
+                match mm_dlp_core::extractor::format_selector::FormatSelector::select(
+                    &info,
+                    &effective_format,
+                ) {
+                    Ok(mm_dlp_core::extractor::format_selector::SelectedFormat::Single(fmt)) => {
+                        println!("{}", fmt.url);
+                    }
+                    Ok(mm_dlp_core::extractor::format_selector::SelectedFormat::Merged {
+                        video,
+                        audio,
+                    }) => {
+                        println!("{}", video.url);
+                        println!("{}", audio.url);
+                    }
+                    Err(_) => {
+                        if let Some(first) = info.formats.first() {
+                            println!("{}", first.url);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
 
         // 3. Handle -F / --list-formats
         if cli.list_formats {
@@ -462,7 +657,15 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // 7. Full download path
+        // 7. Handle --skip-download
+        if cli.skip_download {
+            if !cli.quiet {
+                println!("[info] Skipping download for {}", info.id);
+            }
+            continue;
+        }
+
+        // 8. Full download path
         let is_stdout = cli.output == "-" || cli.paths == "-" || cli.stdout;
         let effective_output = if is_stdout {
             "-".to_string()
@@ -471,7 +674,7 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let options = MediaDownloadOptions {
-            format_selector: cli.format.clone(),
+            format_selector: effective_format,
             output_dir: if is_stdout {
                 "-".to_string()
             } else {
@@ -490,7 +693,7 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let callback: Arc<dyn DownloadProgressCallback> =
-            Arc::new(CliProgressCallback::new(is_stdout));
+            Arc::new(CliProgressCallback::new(is_stdout, cli.newline));
         let task_id = format!(
             "dl_{}",
             std::time::SystemTime::now()
@@ -510,7 +713,7 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         {
             eprintln!("[error] Download failed for {}: {}", url, e);
             has_failure = true;
-            if !cli.ignore_errors {
+            if cli.abort_on_error || !cli.ignore_errors {
                 std::process::exit(1);
             }
         }
@@ -632,7 +835,8 @@ async fn handle_legacy_download(
         buffer_size_bytes: None,
     };
 
-    let callback: Arc<dyn DownloadProgressCallback> = Arc::new(CliProgressCallback::new(false));
+    let callback: Arc<dyn DownloadProgressCallback> =
+        Arc::new(CliProgressCallback::new(false, false));
     let task_id = format!(
         "legacy_{}",
         std::time::SystemTime::now()
@@ -696,7 +900,7 @@ async fn handle_torrent(
         return Ok(());
     }
 
-    let callback = Box::new(CliProgressCallback::new(false));
+    let callback = Box::new(CliProgressCallback::new(false, false));
     let task_id = format!(
         "torrent_{}",
         std::time::SystemTime::now()
