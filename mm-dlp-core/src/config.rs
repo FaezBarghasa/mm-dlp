@@ -19,6 +19,8 @@ pub struct EngineConfig {
     pub cookies_from_browser: Option<String>,
     pub impersonate_target: Option<String>,
     pub dns_servers: Option<String>,
+    pub dangerously_insecure: bool,
+    pub custom_headers: Option<Vec<String>>,
 }
 
 impl EngineConfig {
@@ -95,6 +97,8 @@ impl Default for EngineConfig {
             cookies_from_browser: None,
             impersonate_target: None,
             dns_servers: None,
+            dangerously_insecure: false,
+            custom_headers: None,
         }
     }
 }

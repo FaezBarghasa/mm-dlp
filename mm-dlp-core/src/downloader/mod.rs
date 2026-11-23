@@ -148,6 +148,25 @@ pub fn build_http_client_with_config(
         builder = builder.proxy(proxy);
     }
 
+    if config.dangerously_insecure {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+
+    if let Some(ref headers_list) = config.custom_headers {
+        for header_str in headers_list {
+            if let Some((k, v)) = header_str.split_once(':')
+                && let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.trim().as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v.trim()),
+                )
+            {
+                let mut map = reqwest::header::HeaderMap::new();
+                map.insert(name, val);
+                builder = builder.default_headers(map);
+            }
+        }
+    }
+
     // Configure DNS resolver: default to 1.1.1.1 with fallback to 9.9.9.9,
     // or custom DNS servers if specified.
     let dns_addrs = if let Some(ref dns_str) = config.dns_servers {

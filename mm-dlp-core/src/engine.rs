@@ -337,10 +337,25 @@ impl MmDlpEngine {
             callback_run.on_status(format!("Resolving format for '{}'", info.title));
             let selected = FormatSelector::select(&info, &options.format_selector)?;
 
-            let ext = if options.extract_audio {
-                &options.audio_format
+            let ext_str: String;
+            let ext: &str = if options.extract_audio {
+                if options.audio_format == "best" {
+                    match &selected {
+                        SelectedFormat::Merged { audio, .. } => audio.ext.as_str(),
+                        SelectedFormat::Single(fmt) => {
+                            if fmt.is_audio_only() {
+                                fmt.ext.as_str()
+                            } else {
+                                "mp3"
+                            }
+                        }
+                    }
+                } else {
+                    &options.audio_format
+                }
             } else {
-                selected.primary_ext()
+                ext_str = selected.primary_ext().to_string();
+                &ext_str
             };
 
             let final_target_path = if is_stdout {
@@ -377,10 +392,42 @@ impl MmDlpEngine {
 
             match selected {
                 SelectedFormat::Merged { video, audio } => {
-                    callback_run.on_status(format!(
-                        "Piping concurrent video [{}] and audio [{}] via FFmpeg muxer",
-                        video.format_id, audio.format_id
-                    ));
+                    if options.extract_audio {
+                        // Audio extraction requested: stream ONLY audio, avoiding redundant video download
+                        callback_run.on_status(format!(
+                            "Extracting audio-only stream [{}] ({}) to target format {}",
+                            audio.format_id, audio.ext, options.audio_format
+                        ));
+                        let tmp_audio = output_dir_path
+                            .join(format!("{}.tmp.raw.a.{}", info.id, audio.ext));
+                        let a_bytes = self
+                            .download_format_stream(
+                                audio,
+                                &tmp_audio,
+                                options.concurrent_fragments,
+                                cancel_token.clone(),
+                            )
+                            .await?;
+                        total_bytes += a_bytes;
+
+                        if let Err(e) = extract_audio_from_file(
+                            &tmp_audio,
+                            &final_target_path,
+                            &options.audio_format,
+                            &options.audio_quality,
+                            options.loudness_norm,
+                        )
+                        .await
+                        {
+                            let _ = tokio::fs::remove_file(&tmp_audio).await;
+                            return Err(e);
+                        }
+                        let _ = tokio::fs::remove_file(&tmp_audio).await;
+                    } else {
+                        callback_run.on_status(format!(
+                            "Piping concurrent video [{}] and audio [{}] via FFmpeg muxer",
+                            video.format_id, audio.format_id
+                        ));
 
                     // Use on-the-fly piped muxing (zero disk files for stdout, 50% less I/O for disk)
                     let (v_tx, v_rx) =

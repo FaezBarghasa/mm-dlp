@@ -43,31 +43,39 @@ pub async fn transcode_stream_to_writer<W: AsyncWrite + Unpin + Send + 'static>(
         cmd.arg("-af").arg("loudnorm=I=-16:TP=-1.5:LRA=11");
     }
 
-    match target_format.to_lowercase().as_str() {
-        "mp3" => {
-            cmd.arg("-codec:a")
-                .arg("libmp3lame")
-                .arg("-qscale:a")
-                .arg("2");
-        }
-        "flac" => {
-            cmd.arg("-codec:a").arg("flac");
-        }
-        "opus" => {
-            cmd.arg("-codec:a").arg("libopus").arg("-b:a").arg("192k");
-        }
-        "wav" => {
-            cmd.arg("-codec:a").arg("pcm_s16le");
-        }
-        _ => {
+    let format_clean = target_format.to_lowercase();
+    let (codec_args, container_format): (Vec<&str>, &str) = match format_clean.as_str() {
+        "mp3" => (vec!["-codec:a", "libmp3lame", "-qscale:a", "2"], "mp3"),
+        "flac" => (vec!["-codec:a", "flac"], "flac"),
+        "opus" => (vec!["-codec:a", "libopus", "-b:a", "192k"], "opus"),
+        "wav" => (vec!["-codec:a", "pcm_s16le"], "wav"),
+        "m4a" => (
+            vec![
+                "-codec:a",
+                "aac",
+                "-b:a",
+                "256k",
+                "-movflags",
+                "frag_keyframe+empty_moov",
+            ],
+            "mp4",
+        ),
+        "aac" => (vec!["-codec:a", "aac", "-b:a", "256k"], "adts"),
+        "vorbis" | "ogg" => (vec!["-codec:a", "libvorbis", "-qscale:a", "4"], "ogg"),
+        "best" | "copy" => (vec!["-codec:a", "copy"], "matroska"),
+        other => {
             return Err(EngineError::InvalidConfig(format!(
                 "Unsupported target audio format: {}",
-                target_format
+                other
             )));
         }
+    };
+
+    for arg in &codec_args {
+        cmd.arg(arg);
     }
 
-    cmd.arg("-f").arg(target_format);
+    cmd.arg("-f").arg(container_format);
     cmd.arg("pipe:1");
 
     cmd.stdin(Stdio::piped())
@@ -529,7 +537,8 @@ pub async fn extract_audio_from_file(
         cmd.arg("-af").arg("loudnorm=I=-16:TP=-1.5:LRA=11");
     }
 
-    match target_format.to_lowercase().as_str() {
+    let format_clean = target_format.to_lowercase();
+    match format_clean.as_str() {
         "mp3" => {
             cmd.arg("-c:a").arg("libmp3lame");
             if target_quality == "best" || target_quality == "0" {
@@ -540,7 +549,10 @@ pub async fn extract_audio_from_file(
                 cmd.arg("-q:a").arg("2");
             }
         }
-        "m4a" | "aac" => {
+        "m4a" => {
+            cmd.arg("-c:a").arg("aac").arg("-b:a").arg("256k");
+        }
+        "aac" => {
             cmd.arg("-c:a").arg("aac").arg("-b:a").arg("256k");
         }
         "flac" => {
@@ -549,8 +561,14 @@ pub async fn extract_audio_from_file(
         "opus" => {
             cmd.arg("-c:a").arg("libopus").arg("-b:a").arg("192k");
         }
+        "vorbis" | "ogg" => {
+            cmd.arg("-c:a").arg("libvorbis");
+        }
         "wav" => {
             cmd.arg("-c:a").arg("pcm_s16le");
+        }
+        "best" | "copy" => {
+            cmd.arg("-c:a").arg("copy");
         }
         _ => {
             cmd.arg("-c:a").arg("copy");
@@ -559,7 +577,21 @@ pub async fn extract_audio_from_file(
 
     let is_stdout = output_path == Path::new("-");
     if is_stdout {
-        cmd.arg("-f").arg(target_format);
+        let container = match format_clean.as_str() {
+            "mp3" => "mp3",
+            "flac" => "flac",
+            "opus" => "opus",
+            "wav" => "wav",
+            "m4a" => {
+                cmd.arg("-movflags").arg("frag_keyframe+empty_moov");
+                "mp4"
+            }
+            "aac" => "adts",
+            "vorbis" | "ogg" => "ogg",
+            "best" | "copy" => "matroska",
+            other => other,
+        };
+        cmd.arg("-f").arg(container);
         cmd.arg("pipe:1");
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::null());
