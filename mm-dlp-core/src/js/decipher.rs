@@ -53,7 +53,6 @@ pub struct JsDecipher {
 impl JsDecipher {
     pub fn new() -> Result<Self, EngineError> {
         let engine = SandboxJsEngine::new()?;
-        Ok(Self { engine })
         Ok(Self {
             engine,
             n_cache: Mutex::new(HashMap::new()),
