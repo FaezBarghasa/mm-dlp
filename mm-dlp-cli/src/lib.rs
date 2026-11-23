@@ -145,6 +145,14 @@ pub struct Cli {
     #[arg(long = "write-thumbnail")]
     pub write_thumbnail: bool,
 
+    /// Write video metadata to a .info.json file
+    #[arg(long = "write-info-json")]
+    pub write_info_json: bool,
+
+    /// Time to wait before giving up, in seconds
+    #[arg(long = "socket-timeout")]
+    pub socket_timeout: Option<u64>,
+
     /// Embed thumbnail into media file
     #[arg(long = "embed-thumbnail")]
     pub embed_thumbnail: bool,
@@ -382,6 +390,9 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     config.dangerously_insecure = cli.no_check_certificates;
     if !cli.add_header.is_empty() {
         config.custom_headers = Some(cli.add_header.clone());
+    }
+    if let Some(timeout) = cli.socket_timeout {
+        config.timeout_seconds = timeout;
     }
 
     let fragment_retries = match cli.fragment_retries.to_lowercase().as_str() {
@@ -726,6 +737,24 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             fragment_retries,
             skip_unavailable_fragments,
         };
+
+        if cli.write_info_json && !is_stdout {
+            let info_json_path =
+                std::path::Path::new(&options.output_dir).join(format!("{}.info.json", info.id));
+            if let Ok(json_str) = serde_json::to_string_pretty(&info) {
+                if let Err(e) = std::fs::write(&info_json_path, json_str) {
+                    eprintln!(
+                        "[warning] Failed to write info json to {:?}: {}",
+                        info_json_path, e
+                    );
+                } else if !cli.quiet {
+                    println!(
+                        "[info] Writing video metadata as JSON to: {:?}",
+                        info_json_path
+                    );
+                }
+            }
+        }
 
         let callback: Arc<dyn DownloadProgressCallback> =
             Arc::new(CliProgressCallback::new(is_stdout, cli.newline));

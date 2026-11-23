@@ -105,3 +105,18 @@ fn test_cli_phase2_fragment_resilience_aliases() {
     assert_eq!(cli.fragment_retries, "infinite");
     assert!(cli.no_skip_unavailable_fragments);
 }
+
+#[test]
+fn test_cli_phase4_drop_in_parity_flags() {
+    let args = vec![
+        "mm-dlp",
+        "--write-info-json",
+        "--socket-timeout",
+        "45",
+        "https://example.com/video.mp4",
+    ];
+
+    let cli = Cli::try_parse_from(args).expect("Failed to parse drop-in parity flags");
+    assert!(cli.write_info_json);
+    assert_eq!(cli.socket_timeout, Some(45));
+}

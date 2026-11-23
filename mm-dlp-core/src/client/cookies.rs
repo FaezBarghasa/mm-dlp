@@ -315,11 +315,10 @@ impl FirefoxCookieExtractor {
 
             let ini_path = if root.join("profiles.ini").exists() {
                 root.join("profiles.ini")
-            } else if root
-                .parent()
-                .is_some_and(|p| p.join("profiles.ini").exists())
+            } else if let Some(parent) = root.parent()
+                && parent.join("profiles.ini").exists()
             {
-                root.parent().unwrap().join("profiles.ini")
+                parent.join("profiles.ini")
             } else {
                 PathBuf::new()
             };

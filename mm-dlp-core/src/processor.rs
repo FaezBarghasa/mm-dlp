@@ -455,8 +455,7 @@ pub async fn mux_streams_piped_with_buffer(
             flusher.flush_live_to_writer(file, audio_rx, a_token).await
         });
 
-        let stdout_handle = if is_stdout && child.stdout.is_some() {
-            let mut stdout_pipe = child.stdout.take().unwrap();
+        let stdout_handle = if is_stdout && let Some(mut stdout_pipe) = child.stdout.take() {
             let s_token = cancel_token.clone();
             tokio::spawn(async move {
                 let mut out = tokio::io::stdout();
