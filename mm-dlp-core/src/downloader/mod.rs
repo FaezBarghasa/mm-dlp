@@ -16,19 +16,33 @@ pub mod parallel;
 pub mod torrent;
 
 pub fn build_http_client() -> Result<Client, EngineError> {
+    build_http_client_with_config(&crate::config::EngineConfig::default())
+}
+
+pub fn build_http_client_with_config(
+    config: &crate::config::EngineConfig,
+) -> Result<Client, EngineError> {
     #[cfg(target_os = "ios")]
     let (max_idle, idle_timeout) = (8, Duration::from_secs(30));
     #[cfg(not(target_os = "ios"))]
     let (max_idle, idle_timeout) = (32, Duration::from_secs(90));
 
-    Client::builder()
-        .timeout(Duration::from_secs(30))
+    let mut builder = Client::builder()
+        .timeout(Duration::from_secs(config.timeout_seconds.max(5)))
         .connect_timeout(Duration::from_secs(10))
         .tcp_nodelay(true)
         .tcp_keepalive(Some(Duration::from_secs(60)))
         .pool_max_idle_per_host(max_idle)
         .pool_idle_timeout(idle_timeout)
-        .user_agent("mm-dlp/1.0.0")
+        .user_agent(&config.user_agent);
+
+    if let Some(ref proxy_url) = config.proxy
+        && let Ok(proxy) = reqwest::Proxy::all(proxy_url)
+    {
+        builder = builder.proxy(proxy);
+    }
+
+    builder
         .build()
         .map_err(|e| EngineError::Network(format!("Failed to build reqwest client: {}", e)))
 }

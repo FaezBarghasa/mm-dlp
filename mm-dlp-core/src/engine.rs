@@ -11,7 +11,7 @@ pub use crate::downloader::dash::DashDownloader;
 pub use crate::downloader::hls::HlsDownloader;
 use crate::downloader::parallel::SequencedChunk;
 pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
-use crate::downloader::{build_http_client, fetch_with_fallback, stream_to_file};
+use crate::downloader::{build_http_client_with_config, fetch_with_fallback, stream_to_file};
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;
 use crate::extractor::format_selector::{FormatSelector, SelectedFormat};
@@ -22,7 +22,7 @@ use crate::processor::{
 };
 use crate::resolver::SourceResolver;
 use crate::utils::{
-    expand_output_template, resolve_duplicate_path, sanitize_filename, sanitize_url,
+    expand_output_template_with_meta, resolve_duplicate_path, sanitize_filename, sanitize_url,
     validate_output_path,
 };
 
@@ -76,7 +76,7 @@ pub struct MmDlpEngine {
 
 impl MmDlpEngine {
     pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
-        let client = build_http_client()?;
+        let client = build_http_client_with_config(&config)?;
         let registry = Arc::new(PlatformRegistry::new());
         let resolver = SourceResolver::new(registry.clone());
         Ok(Self {
@@ -344,13 +344,29 @@ impl MmDlpEngine {
             let final_target_path = if is_stdout {
                 Path::new("-").to_path_buf()
             } else {
-                let target_filename = expand_output_template(
-                    &options.output_template,
-                    &info.id,
-                    &info.title,
-                    info.uploader.as_deref(),
+                let (h, w, fps, fid) = match &selected {
+                    SelectedFormat::Merged { video, .. } => (
+                        video.height,
+                        video.width,
+                        video.fps,
+                        Some(video.format_id.as_str()),
+                    ),
+                    SelectedFormat::Single(fmt) => {
+                        (fmt.height, fmt.width, fmt.fps, Some(fmt.format_id.as_str()))
+                    }
+                };
+                let ctx = crate::utils::TemplateContext {
+                    id: &info.id,
+                    title: &info.title,
+                    uploader: info.uploader.as_deref(),
                     ext,
-                );
+                    height: h,
+                    width: w,
+                    fps,
+                    format_id: fid,
+                };
+                let target_filename =
+                    expand_output_template_with_meta(&options.output_template, &ctx);
                 let raw_target_path = output_dir_path.join(&target_filename);
                 resolve_duplicate_path(&raw_target_path)
             };

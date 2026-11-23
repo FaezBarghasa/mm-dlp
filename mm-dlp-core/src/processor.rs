@@ -382,6 +382,13 @@ pub async fn mux_streams_piped(
                 .open(&v_path)
                 .await
                 .map_err(|e| EngineError::IoError(e.to_string()))?;
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::io::AsRawFd;
+                unsafe {
+                    libc::fcntl(file.as_raw_fd(), libc::F_SETPIPE_SZ, 1048576);
+                }
+            }
             let flusher = SequentialFlusher::new();
             flusher.flush_live_to_writer(file, video_rx, v_token).await
         });
@@ -394,6 +401,13 @@ pub async fn mux_streams_piped(
                 .open(&a_path)
                 .await
                 .map_err(|e| EngineError::IoError(e.to_string()))?;
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::io::AsRawFd;
+                unsafe {
+                    libc::fcntl(file.as_raw_fd(), libc::F_SETPIPE_SZ, 1048576);
+                }
+            }
             let flusher = SequentialFlusher::new();
             flusher.flush_live_to_writer(file, audio_rx, a_token).await
         });

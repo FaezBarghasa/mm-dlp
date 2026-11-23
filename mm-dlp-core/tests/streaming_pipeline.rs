@@ -294,15 +294,9 @@ async fn test_mux_streams_piped_with_ffmpeg_e2e() {
     });
 
     let out_file = std::env::temp_dir().join(format!("test_mux_e2e_{}.mp4", std::process::id()));
-    let res = mm_dlp_core::processor::mux_streams_piped(
-        v_rx,
-        a_rx,
-        &out_file,
-        "ts",
-        "ts",
-        cancel_token,
-    )
-    .await;
+    let res =
+        mm_dlp_core::processor::mux_streams_piped(v_rx, a_rx, &out_file, "ts", "ts", cancel_token)
+            .await;
 
     assert!(res.is_ok(), "Muxing failed: {:?}", res);
     let total_bytes = res.unwrap();

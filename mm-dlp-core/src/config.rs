@@ -5,6 +5,8 @@ pub struct EngineConfig {
     pub max_concurrent_downloads: u32,
     pub user_agent: String,
     pub timeout_seconds: u64,
+    pub proxy: Option<String>,
+    pub cookies_file: Option<String>,
 }
 
 impl Default for EngineConfig {
@@ -13,6 +15,8 @@ impl Default for EngineConfig {
             max_concurrent_downloads: 4,
             user_agent: String::from("mm-dlp/1.0.0"),
             timeout_seconds: 30,
+            proxy: None,
+            cookies_file: None,
         }
     }
 }

@@ -48,6 +48,78 @@ pub fn sanitize_url(raw_url: &str) -> Result<String, EngineError> {
     Ok(clean_str)
 }
 
+/// Context containing video/audio metadata for output template expansion.
+#[derive(Debug, Clone, Default)]
+pub struct TemplateContext<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub uploader: Option<&'a str>,
+    pub ext: &'a str,
+    pub height: Option<u32>,
+    pub width: Option<u32>,
+    pub fps: Option<f64>,
+    pub format_id: Option<&'a str>,
+}
+
+/// Expands a yt-dlp output template string with rich format and metadata tokens.
+pub fn expand_output_template_with_meta(template: &str, ctx: &TemplateContext) -> String {
+    let uploader_str = ctx.uploader.unwrap_or("NA");
+    let safe_title = sanitize_filename(ctx.title);
+    let safe_uploader = sanitize_filename(uploader_str);
+    let safe_id = sanitize_filename(ctx.id);
+
+    let mut result = template.to_string();
+    result = result.replace("%(title)s", &safe_title);
+    result = result.replace("%(id)s", &safe_id);
+    result = result.replace("%(uploader)s", &safe_uploader);
+    result = result.replace("%(ext)s", ctx.ext);
+
+    if let Some(h) = ctx.height {
+        result = result.replace("%(height)s", &h.to_string());
+    } else {
+        result = result.replace("%(height)s", "NA");
+    }
+
+    if let Some(w) = ctx.width {
+        result = result.replace("%(width)s", &w.to_string());
+    } else {
+        result = result.replace("%(width)s", "NA");
+    }
+
+    if let (Some(w), Some(h)) = (ctx.width, ctx.height) {
+        result = result.replace("%(resolution)s", &format!("{}x{}", w, h));
+    } else if let Some(h) = ctx.height {
+        result = result.replace("%(resolution)s", &format!("{}p", h));
+    } else {
+        result = result.replace("%(resolution)s", "NA");
+    }
+
+    if let Some(fps) = ctx.fps {
+        result = result.replace("%(fps)s", &format!("{:.0}", fps));
+    } else {
+        result = result.replace("%(fps)s", "NA");
+    }
+
+    if let Some(fid) = ctx.format_id {
+        result = result.replace("%(format_id)s", fid);
+    } else {
+        result = result.replace("%(format_id)s", "NA");
+    }
+
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into());
+    result = result.replace("%(epoch)s", &epoch);
+
+    if !template.contains("%(ext)s") && !result.ends_with(&format!(".{}", ctx.ext)) {
+        result = format!("{}.{}", result, ctx.ext);
+    }
+
+    let parts: Vec<String> = result.split('/').map(sanitize_filename).collect();
+    parts.join("/")
+}
+
 /// Expands a yt-dlp output template string (e.g. "%(title)s [%(id)s].%(ext)s").
 pub fn expand_output_template(
     template: &str,
@@ -56,22 +128,17 @@ pub fn expand_output_template(
     uploader: Option<&str>,
     ext: &str,
 ) -> String {
-    let uploader_str = uploader.unwrap_or("NA");
-    let safe_title = sanitize_filename(title);
-    let safe_uploader = sanitize_filename(uploader_str);
-    let safe_id = sanitize_filename(id);
-
-    let mut result = template.to_string();
-    result = result.replace("%(title)s", &safe_title);
-    result = result.replace("%(id)s", &safe_id);
-    result = result.replace("%(uploader)s", &safe_uploader);
-    result = result.replace("%(ext)s", ext);
-
-    if !template.contains("%(ext)s") && !result.ends_with(&format!(".{}", ext)) {
-        result = format!("{}.{}", result, ext);
-    }
-
-    sanitize_filename(&result)
+    let ctx = TemplateContext {
+        id,
+        title,
+        uploader,
+        ext,
+        height: None,
+        width: None,
+        fps: None,
+        format_id: None,
+    };
+    expand_output_template_with_meta(template, &ctx)
 }
 
 /// Detects the platform (e.g. "spotify", "soundcloud", "youtube", "vimeo", "torrent") from URL using `std::sync::LazyLock` regexes.

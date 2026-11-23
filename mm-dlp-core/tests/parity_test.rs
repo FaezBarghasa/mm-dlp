@@ -266,6 +266,24 @@ fn test_output_template_expansion_parity() {
         filename,
         "Rick Astley - Never Gonna Give You Up [dQw4w9WgXcQ].mp4"
     );
+
+    let rich_template =
+        "%(uploader)s/%(height)sp/%(title)s [%(format_id)s] (%(resolution)s).%(ext)s";
+    let ctx = mm_dlp_core::utils::TemplateContext {
+        id: "dQw4w9WgXcQ",
+        title: "Never Gonna Give You Up",
+        uploader: Some("Rick Astley"),
+        ext: "mp4",
+        height: Some(1080),
+        width: Some(1920),
+        fps: Some(60.0),
+        format_id: Some("137+140"),
+    };
+    let rich_filename = mm_dlp_core::utils::expand_output_template_with_meta(rich_template, &ctx);
+    assert_eq!(
+        rich_filename,
+        "Rick Astley/1080p/Never Gonna Give You Up [137+140] (1920x1080).mp4"
+    );
 }
 
 #[test]

@@ -164,6 +164,66 @@ struct Cli {
     /// Apply EBU R128 real-time loudness normalization filter
     #[arg(long = "loudness-norm")]
     loudness_norm: bool,
+
+    /// Print various debugging information
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
+
+    /// Activate quiet mode (suppress non-error output)
+    #[arg(short = 'q', long = "quiet")]
+    quiet: bool,
+
+    /// Suppress warning messages
+    #[arg(long = "no-warnings")]
+    no_warnings: bool,
+
+    /// Continue on download errors (do not exit immediately)
+    #[arg(short = 'i', long = "ignore-errors")]
+    ignore_errors: bool,
+
+    /// Use the specified HTTP/HTTPS/SOCKS5 proxy
+    #[arg(long = "proxy")]
+    proxy: Option<String>,
+
+    /// Load cookies from browser (e.g. chrome, firefox, brave, edge, safari)
+    #[arg(long = "cookies-from-browser")]
+    cookies_from_browser: Option<String>,
+
+    /// Custom User-Agent header
+    #[arg(long = "user-agent")]
+    user_agent: Option<String>,
+
+    /// Custom Referer header
+    #[arg(long = "referer")]
+    referer: Option<String>,
+
+    /// Read URLs to download from a batch file (one URL per line)
+    #[arg(short = 'a', long = "batch-file")]
+    batch_file: Option<String>,
+
+    /// Keep intermediate video file on disk after post-processing
+    #[arg(short = 'k', long = "keep-video")]
+    keep_video: bool,
+
+    /// Do not overwrite existing output files
+    #[arg(short = 'w', long = "no-overwrites")]
+    no_overwrites: bool,
+
+    /// Write subtitle file
+    #[arg(long = "write-sub", alias = "write-subs")]
+    write_subs: bool,
+
+    /// Write automatically generated subtitle file
+    #[arg(long = "write-auto-sub", alias = "write-auto-subs")]
+    write_auto_subs: bool,
+
+    /// Languages of the subtitles to download (comma-separated or regex)
+    #[arg(long = "sub-langs", alias = "sub-lang")]
+    sub_langs: Option<String>,
+
+    /// Embed subtitles into media file
+    #[arg(long = "embed-subs", alias = "embed-sub")]
+    embed_subs: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -213,7 +273,13 @@ enum Commands {
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let config = EngineConfig::default();
+    let mut config = EngineConfig::default();
+    if let Some(ref ua) = cli.user_agent {
+        config.user_agent = ua.clone();
+    }
+    config.proxy = cli.proxy.clone();
+    config.cookies_file = cli.cookies.clone();
+
     let engine = MmDlpEngine::new(config)?;
 
     // Handle explicit subcommands first
@@ -248,13 +314,35 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Drop-in execution with positional URLs
-    if cli.urls.is_empty() {
+    // Collect URLs from positional args and batch file
+    let mut target_urls = cli.urls.clone();
+    if let Some(ref batch_path) = cli.batch_file {
+        match std::fs::read_to_string(batch_path) {
+            Ok(content) => {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        target_urls.push(trimmed.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[error] Failed to read batch file {}: {}", batch_path, e);
+                if !cli.ignore_errors {
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    if target_urls.is_empty() {
         eprintln!("Usage: mm-dlp [OPTIONS] <URL>...\nFor more information, try '--help'.");
         std::process::exit(1);
     }
 
-    for url in &cli.urls {
+    let mut has_failure = false;
+
+    for url in &target_urls {
         // 1. BitTorrent auto-routing
         if url.starts_with("magnet:") || url.ends_with(".torrent") {
             if cli.list_formats {
@@ -277,6 +365,10 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             Ok(info) => info,
             Err(e) => {
                 eprintln!("[error] {}: {}", url, e);
+                has_failure = true;
+                if !cli.ignore_errors {
+                    std::process::exit(1);
+                }
                 continue;
             }
         };
@@ -357,12 +449,24 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
         if is_stdout {
             eprintln!("[{}] {}: Streaming to stdout", info.id, info.title);
-        } else {
+        } else if !cli.quiet {
             println!("[{}] {}: Downloading", info.id, info.title);
         }
-        let _ = engine
+
+        if let Err(e) = engine
             .download_media(task_id, url.clone(), options, callback)
-            .await;
+            .await
+        {
+            eprintln!("[error] Download failed for {}: {}", url, e);
+            has_failure = true;
+            if !cli.ignore_errors {
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if has_failure && !cli.ignore_errors {
+        std::process::exit(1);
     }
 
     Ok(())
