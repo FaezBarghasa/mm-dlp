@@ -639,4 +639,3 @@ async fn test_phase2_fragment_resilience_and_downloaders() {
         .with_skip_unavailable(true);
     drop(dash);
 }
-

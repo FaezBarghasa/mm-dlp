@@ -158,6 +158,7 @@ impl YouTubeExtractor {
                     let mut base_url = String::new();
                     let mut s = String::new();
                     let mut sp = "sig".to_string();
+                    let mut n_param = String::new();
 
                     for pair in cipher.split('&') {
                         let mut kv = pair.splitn(2, '=');
@@ -169,11 +170,16 @@ impl YouTubeExtractor {
                             "url" => base_url = v,
                             "sp" => sp = v,
                             "s" => s = v,
+                            "n" => n_param = v,
                             _ => {}
                         }
                     }
 
                     if !base_url.is_empty() {
+                        if !n_param.is_empty() && !base_url.contains("n=") {
+                            let delimiter = if base_url.contains('?') { '&' } else { '?' };
+                            base_url = format!("{}{}{}={}", base_url, delimiter, "n", n_param);
+                        }
                         if !s.is_empty() {
                             if let Some((decipherer, js_code)) = js_decipher
                                 && let Ok(deciphered) = decipherer.decipher(js_code, &s)
@@ -189,8 +195,14 @@ impl YouTubeExtractor {
                 }
             }
 
-            let Some(final_url) = stream_url else {
+            let Some(raw_stream_url) = stream_url else {
                 continue;
+            };
+
+            let final_url = if let Some((decipherer, js_code)) = js_decipher {
+                Self::transform_n_parameter(decipherer, js_code, &raw_stream_url)
+            } else {
+                raw_stream_url
             };
 
             let width = item["width"].as_u64().map(|w| w as u32);
@@ -284,6 +296,61 @@ impl YouTubeExtractor {
         let mut cache = PLAYER_JS_CACHE.write().await;
         *cache = Some(js_code.clone());
         Some(js_code)
+    }
+
+    /// Checks if format stream URLs or ciphers require JavaScript deciphering or n-challenge solving.
+    pub fn requires_js_processing(streaming_data: &Value) -> bool {
+        let check_format = |item: &Value| -> bool {
+            if item["signatureCipher"].is_string() || item["cipher"].is_string() {
+                return true;
+            }
+            if let Some(url) = item["url"].as_str() {
+                if url.contains("n=") || url.contains("&n=") || url.contains("?n=") {
+                    return true;
+                }
+            }
+            false
+        };
+
+        if let Some(muxed) = streaming_data["formats"].as_array() {
+            if muxed.iter().any(check_format) {
+                return true;
+            }
+        }
+        if let Some(adaptive) = streaming_data["adaptiveFormats"].as_array() {
+            if adaptive.iter().any(check_format) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Transforms the `n` challenge query parameter in stream URL using the player JavaScript decipherer.
+    pub fn transform_n_parameter(decipherer: &JsDecipher, js_code: &str, url_str: &str) -> String {
+        static N_PARAM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r#"(^|[?&])n=([^&]+)"#).expect("Invalid n regex")
+        });
+
+        let Some(caps) = N_PARAM_REGEX.captures(url_str) else {
+            return url_str.to_string();
+        };
+
+        let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let raw_n = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let decoded_n = urlencoding::decode(raw_n).unwrap_or(std::borrow::Cow::Borrowed(raw_n));
+
+        match decipherer.decipher_n(js_code, &decoded_n) {
+            Ok(transformed) => {
+                let encoded_transformed = urlencoding::encode(&transformed);
+                let target_str = format!("{}n={}", prefix, raw_n);
+                let replacement_str = format!("{}n={}", prefix, encoded_transformed);
+                url_str.replacen(&target_str, &replacement_str, 1)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to decipher YouTube n-challenge token: {}", e);
+                url_str.to_string()
+            }
+        }
     }
 
     pub fn parse_media_info_with_js(
