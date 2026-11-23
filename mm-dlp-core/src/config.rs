@@ -23,6 +23,8 @@ pub struct EngineConfig {
     pub custom_headers: Option<Vec<String>>,
     pub fragment_retries: u32,
     pub skip_unavailable_fragments: bool,
+    pub no_part: bool,
+    pub limit_rate: Option<u64>,
 }
 
 impl EngineConfig {
@@ -103,6 +105,8 @@ impl Default for EngineConfig {
             custom_headers: None,
             fragment_retries: 10,
             skip_unavailable_fragments: true,
+            no_part: false,
+            limit_rate: None,
         }
     }
 }

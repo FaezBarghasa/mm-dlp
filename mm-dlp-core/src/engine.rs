@@ -11,7 +11,10 @@ pub use crate::downloader::dash::DashDownloader;
 pub use crate::downloader::hls::HlsDownloader;
 use crate::downloader::parallel::SequencedChunk;
 pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
-use crate::downloader::{build_http_client_with_config, fetch_with_fallback, stream_to_file};
+use crate::downloader::{
+    build_http_client_with_config, download_resumable_to_file, fetch_with_fallback,
+    stream_to_file, RateLimiter,
+};
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;
 use crate::extractor::format_selector::{FormatSelector, SelectedFormat};
@@ -42,6 +45,8 @@ pub struct MediaDownloadOptions {
     pub buffer_size_bytes: Option<usize>,
     pub fragment_retries: usize,
     pub skip_unavailable_fragments: bool,
+    pub no_part: bool,
+    pub limit_rate: Option<u64>,
 }
 
 impl Default for MediaDownloadOptions {
@@ -61,6 +66,8 @@ impl Default for MediaDownloadOptions {
             buffer_size_bytes: None,
             fragment_retries: 10,
             skip_unavailable_fragments: true,
+            no_part: false,
+            limit_rate: None,
         }
     }
 }
@@ -250,8 +257,16 @@ impl MmDlpEngine {
             let final_target_path = resolve_duplicate_path(&raw_target_path);
 
             callback_run.on_status("Downloading stream".to_string());
-            let downloaded_bytes =
-                stream_to_file(response, &final_target_path, cancel_token.clone()).await?;
+            let limiter = self.config.limit_rate.map(RateLimiter::new).map(Arc::new);
+            let downloaded_bytes = download_resumable_to_file(
+                &self.client,
+                &candidate.url,
+                &final_target_path,
+                cancel_token.clone(),
+                self.config.no_part,
+                limiter,
+            )
+            .await?;
             callback_run.on_progress(100.0);
 
             if let Some(art_url) = &metadata.thumbnail_url {
@@ -748,8 +763,16 @@ impl MmDlpEngine {
             dash.download_to_file(&format.url, dest, cancel_token, None)
                 .await
         } else {
-            let resp = fetch_with_fallback(&self.client, &format.url).await?;
-            stream_to_file(resp, dest, cancel_token).await
+            let limiter = self.config.limit_rate.map(RateLimiter::new).map(Arc::new);
+            download_resumable_to_file(
+                &self.client,
+                &format.url,
+                dest,
+                cancel_token,
+                self.config.no_part,
+                limiter,
+            )
+            .await
         }
     }
 }

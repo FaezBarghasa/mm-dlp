@@ -137,6 +137,20 @@ impl FormatSelector {
         {
             return Some(f);
         }
+
+        let is_video_only_preferred = name == "bestvideo" || name == "bv";
+        if is_video_only_preferred {
+            let video_only_candidates: Vec<&'a MediaFormat> = info
+                .formats
+                .iter()
+                .filter(|f| f.has_video() && !f.has_audio())
+                .collect();
+            let filtered = Self::filter_candidates(&video_only_candidates, filter);
+            if let Some(best) = filtered.into_iter().max_by_key(|f| Self::video_score(f)) {
+                return Some(best);
+            }
+        }
+
         let candidates: Vec<&'a MediaFormat> =
             info.formats.iter().filter(|f| f.has_video()).collect();
 
@@ -154,6 +168,20 @@ impl FormatSelector {
         {
             return Some(f);
         }
+
+        let is_audio_only_preferred = name == "bestaudio" || name == "ba";
+        if is_audio_only_preferred {
+            let audio_only_candidates: Vec<&'a MediaFormat> = info
+                .formats
+                .iter()
+                .filter(|f| f.has_audio() && !f.has_video())
+                .collect();
+            let filtered = Self::filter_candidates(&audio_only_candidates, filter);
+            if let Some(best) = filtered.into_iter().max_by_key(|f| Self::audio_score(f)) {
+                return Some(best);
+            }
+        }
+
         let candidates: Vec<&'a MediaFormat> =
             info.formats.iter().filter(|f| f.has_audio()).collect();
 

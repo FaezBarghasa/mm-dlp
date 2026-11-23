@@ -10,10 +10,13 @@ use crate::error::EngineError;
 pub mod dash;
 pub mod flusher;
 pub mod hls;
+pub mod limiter;
 pub mod manifest;
 pub mod mmap;
 pub mod parallel;
 pub mod torrent;
+
+pub use limiter::{parse_rate_limit, RateLimiter};
 
 pub fn build_http_client() -> Result<Client, EngineError> {
     build_http_client_with_config(&crate::config::EngineConfig::default())
@@ -280,9 +283,19 @@ pub async fn fetch_bytes_with_retry(
 }
 
 pub async fn stream_to_file(
+    response: Response,
+    target_path: &Path,
+    cancel_token: CancellationToken,
+) -> Result<u64, EngineError> {
+    stream_to_file_with_options(response, target_path, cancel_token, false, None).await
+}
+
+pub async fn stream_to_file_with_options(
     mut response: Response,
     target_path: &Path,
     cancel_token: CancellationToken,
+    no_part: bool,
+    rate_limiter: Option<std::sync::Arc<RateLimiter>>,
 ) -> Result<u64, EngineError> {
     if target_path == Path::new("-") {
         let mut stdout = tokio::io::stdout();
@@ -296,6 +309,9 @@ pub async fn stream_to_file(
             if cancel_token.is_cancelled() {
                 return Err(EngineError::Cancelled);
             }
+            if let Some(ref limiter) = rate_limiter {
+                limiter.acquire(chunk_res.len()).await;
+            }
             stdout.write_all(&chunk_res).await?;
             downloaded_bytes += chunk_res.len() as u64;
         }
@@ -304,8 +320,23 @@ pub async fn stream_to_file(
         return Ok(downloaded_bytes);
     }
 
-    let tmp_path = target_path.with_extension("tmp");
-    let mut file = File::create(&tmp_path).await?;
+    let is_partial = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let work_path = if no_part {
+        target_path.to_path_buf()
+    } else {
+        std::path::PathBuf::from(format!("{}.part", target_path.display()))
+    };
+
+    let mut file = if is_partial {
+        tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&work_path)
+            .await?
+    } else {
+        File::create(&work_path).await?
+    };
+
     let mut downloaded_bytes: u64 = 0;
 
     while let Some(chunk_res) = response
@@ -314,8 +345,12 @@ pub async fn stream_to_file(
         .map_err(|e| EngineError::Network(e.to_string()))?
     {
         if cancel_token.is_cancelled() {
-            let _ = tokio::fs::remove_file(&tmp_path).await;
+            // Keep .part file intact on disk for subsequent resumption
+            let _ = file.flush().await;
             return Err(EngineError::Cancelled);
+        }
+        if let Some(ref limiter) = rate_limiter {
+            limiter.acquire(chunk_res.len()).await;
         }
         file.write_all(&chunk_res).await?;
         downloaded_bytes += chunk_res.len() as u64;
@@ -324,8 +359,94 @@ pub async fn stream_to_file(
     file.flush().await?;
     file.sync_all().await?;
 
-    tokio::fs::rename(&tmp_path, target_path).await?;
+    if !no_part {
+        tokio::fs::rename(&work_path, target_path).await?;
+    }
+
     Ok(downloaded_bytes)
+}
+
+/// Download a URL to file with automatic Range-based resumption via `<path>.part`.
+pub async fn download_resumable_to_file(
+    client: &Client,
+    url: &str,
+    target_path: &Path,
+    cancel_token: CancellationToken,
+    no_part: bool,
+    rate_limiter: Option<std::sync::Arc<RateLimiter>>,
+) -> Result<u64, EngineError> {
+    if target_path == Path::new("-") {
+        let resp = fetch_with_fallback(client, url).await?;
+        return stream_to_file_with_options(resp, target_path, cancel_token, true, rate_limiter)
+            .await;
+    }
+
+    let work_path = if no_part {
+        target_path.to_path_buf()
+    } else {
+        std::path::PathBuf::from(format!("{}.part", target_path.display()))
+    };
+
+    let mut existing_bytes = 0u64;
+    if work_path.exists()
+        && let Ok(meta) = tokio::fs::metadata(&work_path).await
+    {
+        existing_bytes = meta.len();
+    }
+
+    let mut attempts = 0;
+    let response = loop {
+        if cancel_token.is_cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+
+        let mut req = client.get(url);
+        if existing_bytes > 0 {
+            req = req.header("Range", format!("bytes={}-", existing_bytes));
+        }
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => break resp,
+            Ok(resp) if resp.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE => {
+                existing_bytes = 0;
+                let _ = tokio::fs::remove_file(&work_path).await;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                attempts += 1;
+                if attempts >= 3
+                    || status == reqwest::StatusCode::NOT_FOUND
+                    || status == reqwest::StatusCode::GONE
+                {
+                    return Err(EngineError::Network(format!(
+                        "HTTP download failed with status code: {}",
+                        status
+                    )));
+                }
+            }
+            Err(e) => {
+                attempts += 1;
+                if attempts >= 3 {
+                    return Err(EngineError::Network(format!("Network request failed: {}", e)));
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(150 * (1 << attempts.min(3)))).await;
+    };
+
+    let is_partial = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let initial_offset = if is_partial { existing_bytes } else { 0 };
+
+    let downloaded = stream_to_file_with_options(
+        response,
+        target_path,
+        cancel_token,
+        no_part,
+        rate_limiter,
+    )
+    .await?;
+
+    Ok(initial_offset + downloaded)
 }
 
 #[cfg(target_os = "linux")]
