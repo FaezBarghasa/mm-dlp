@@ -756,6 +756,18 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        if cli.write_info_json && !is_stdout {
+            let info_json_path = std::path::Path::new(&options.output_dir)
+                .join(format!("{}.info.json", info.id));
+            if let Ok(json_str) = serde_json::to_string_pretty(&info) {
+                if let Err(e) = std::fs::write(&info_json_path, json_str) {
+                    eprintln!("[warning] Failed to write info json to {:?}: {}", info_json_path, e);
+                } else if !cli.quiet {
+                    println!("[info] Writing video metadata as JSON to: {:?}", info_json_path);
+                }
+            }
+        }
+
         let callback: Arc<dyn DownloadProgressCallback> =
             Arc::new(CliProgressCallback::new(is_stdout, cli.newline));
         let task_id = format!(
