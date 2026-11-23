@@ -226,3 +226,93 @@ async fn test_mux_streams_piped_cancellation() {
     let _ = tokio::fs::remove_file(&out_dir).await;
     assert!(matches!(res, Err(mm_dlp_core::EngineError::Cancelled)));
 }
+
+#[tokio::test]
+async fn test_mux_streams_piped_with_ffmpeg_e2e() {
+    // Generate 1-second synthetic video and audio MPEG-TS streams via ffmpeg
+    let v_output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=320x240:rate=10",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "mpegts",
+            "pipe:1",
+        ])
+        .output();
+
+    let a_output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=1",
+            "-c:a",
+            "aac",
+            "-f",
+            "mpegts",
+            "pipe:1",
+        ])
+        .output();
+
+    let (v_bytes, a_bytes) = match (v_output, a_output) {
+        (Ok(v), Ok(a)) if v.status.success() && a.status.success() => (v.stdout, a.stdout),
+        _ => {
+            eprintln!("FFmpeg not available or failed to generate test streams; skipping test");
+            return;
+        }
+    };
+
+    let (v_tx, v_rx) = mpsc::channel(4);
+    let (a_tx, a_rx) = mpsc::channel(4);
+    let cancel_token = CancellationToken::new();
+
+    // Spawn senders that send the synthetic data
+    tokio::spawn(async move {
+        let _ = v_tx
+            .send(Ok(SequencedChunk {
+                index: 0,
+                data: Bytes::from(v_bytes),
+            }))
+            .await;
+    });
+
+    tokio::spawn(async move {
+        let _ = a_tx
+            .send(Ok(SequencedChunk {
+                index: 0,
+                data: Bytes::from(a_bytes),
+            }))
+            .await;
+    });
+
+    let out_file = std::env::temp_dir().join(format!("test_mux_e2e_{}.mp4", std::process::id()));
+    let res = mm_dlp_core::processor::mux_streams_piped(
+        v_rx,
+        a_rx,
+        &out_file,
+        "ts",
+        "ts",
+        cancel_token,
+    )
+    .await;
+
+    assert!(res.is_ok(), "Muxing failed: {:?}", res);
+    let total_bytes = res.unwrap();
+    assert!(total_bytes > 0);
+
+    // Verify output file exists and has non-zero size
+    let metadata = tokio::fs::metadata(&out_file)
+        .await
+        .expect("Output file must exist");
+    assert!(metadata.len() > 1000, "Output file must contain muxed data");
+
+    let _ = tokio::fs::remove_file(&out_file).await;
+}

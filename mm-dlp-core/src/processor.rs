@@ -378,7 +378,6 @@ pub async fn mux_streams_piped(
         let v_token = cancel_token.clone();
         let v_handle = tokio::spawn(async move {
             let file = tokio::fs::OpenOptions::new()
-                .read(true)
                 .write(true)
                 .open(&v_path)
                 .await
@@ -391,7 +390,6 @@ pub async fn mux_streams_piped(
         let a_token = cancel_token.clone();
         let a_handle = tokio::spawn(async move {
             let file = tokio::fs::OpenOptions::new()
-                .read(true)
                 .write(true)
                 .open(&a_path)
                 .await
