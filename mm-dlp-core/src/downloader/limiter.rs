@@ -67,45 +67,51 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(bytes_per_sec: u64) -> Self {
-        let max_tokens = bytes_per_sec.max(1) as f64;
+        let max_rate = bytes_per_sec.max(1) as f64;
+        let burst_capacity = max_rate.max(65536.0);
         Self {
             bytes_per_sec: bytes_per_sec.max(1),
             state: Arc::new(Mutex::new(BucketState {
-                tokens: max_tokens,
+                tokens: burst_capacity,
                 last_replenish: Instant::now(),
             })),
         }
     }
 
     /// Asynchronously wait until the requested number of bytes can be transferred.
+    /// Employs a token-debt algorithm so chunks larger than `bytes_per_sec` (e.g. 64KB chunk on 20KB/s limit)
+    /// never deadlock or busy-loop.
     pub async fn acquire(&self, bytes: usize) {
         if self.bytes_per_sec == 0 || bytes == 0 {
             return;
         }
 
         let needed = bytes as f64;
-        let capacity = self.bytes_per_sec as f64;
+        let rate = self.bytes_per_sec as f64;
+        let burst_capacity = rate.max(65536.0);
 
-        loop {
+        let wait_duration = {
             let mut state = self.state.lock().await;
             let now = Instant::now();
             let elapsed = now.duration_since(state.last_replenish).as_secs_f64();
             state.last_replenish = now;
 
-            // Replenish tokens based on elapsed duration
-            state.tokens = (state.tokens + elapsed * capacity).min(capacity);
+            // Replenish tokens up to burst capacity
+            state.tokens = (state.tokens + elapsed * rate).min(burst_capacity);
 
-            if state.tokens >= needed {
-                state.tokens -= needed;
-                return;
+            // Deduct requested tokens (token debt permitted)
+            state.tokens -= needed;
+
+            if state.tokens < 0.0 {
+                let deficit = -state.tokens;
+                Some(tokio::time::Duration::from_secs_f64(deficit / rate))
+            } else {
+                None
             }
+        };
 
-            // Calculate wait duration for deficit
-            let deficit = needed - state.tokens;
-            let wait_secs = deficit / capacity;
-            drop(state);
-
-            tokio::time::sleep(tokio::time::Duration::from_secs_f64(wait_secs)).await;
+        if let Some(dur) = wait_duration {
+            tokio::time::sleep(dur).await;
         }
     }
 
@@ -150,6 +156,23 @@ mod tests {
         assert!(
             elapsed >= 800,
             "Expected at least 800ms pacing, got {}ms",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_chunk_larger_than_rate() {
+        // Test chunk (64KB) strictly larger than bytes_per_sec (20KB/s)
+        let limiter = RateLimiter::new(20_000);
+        let start = Instant::now();
+        // First chunk consumes burst
+        limiter.acquire(65_536).await;
+        // Second chunk goes into debt, forcing ~3.2s pacing without deadlocking
+        limiter.acquire(65_536).await;
+        let elapsed = start.elapsed().as_millis();
+        assert!(
+            elapsed >= 2500,
+            "Expected pacing for large chunk debt, got {}ms",
             elapsed
         );
     }

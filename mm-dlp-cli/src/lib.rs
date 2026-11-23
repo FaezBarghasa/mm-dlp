@@ -425,6 +425,7 @@ async fn run_cli_inner() -> Result<(), Box<dyn std::error::Error>> {
         config.timeout_seconds = timeout;
     }
     config.no_part = cli.no_part;
+    config.no_overwrites = cli.no_overwrites;
     if let Some(ref r_str) = cli.limit_rate {
         match mm_dlp_core::downloader::limiter::parse_rate_limit(r_str) {
             Ok(limit) => config.limit_rate = Some(limit),
@@ -542,6 +543,26 @@ async fn run_cli_inner() -> Result<(), Box<dyn std::error::Error>> {
     if target_urls.is_empty() {
         eprintln!("Usage: mm-dlp [OPTIONS] <URL>...\nFor more information, try '--help'.");
         std::process::exit(1);
+    }
+
+    // Apply playlist / batch slicing if playlist range flags are set
+    if cli.playlist_items.is_some() || cli.playlist_start.is_some() || cli.playlist_end.is_some() {
+        let fake_tracks: Vec<mm_dlp_core::PlaylistTrack> = target_urls
+            .iter()
+            .enumerate()
+            .map(|(i, u)| mm_dlp_core::PlaylistTrack {
+                title: format!("Item {}", i + 1),
+                artist: String::new(),
+                url: u.clone(),
+            })
+            .collect();
+        let sliced = mm_dlp_core::playlist::slice_playlist_items(
+            &fake_tracks,
+            cli.playlist_items.as_deref(),
+            cli.playlist_start,
+            cli.playlist_end,
+        );
+        target_urls = sliced.into_iter().map(|t| t.url).collect();
     }
 
     let mut has_failure = false;
@@ -780,6 +801,7 @@ async fn run_cli_inner() -> Result<(), Box<dyn std::error::Error>> {
             skip_unavailable_fragments,
             no_part: cli.no_part,
             limit_rate: engine.config().limit_rate,
+            no_overwrites: cli.no_overwrites,
         };
 
         if cli.write_info_json && !is_stdout {
@@ -945,6 +967,7 @@ async fn handle_legacy_download(
         skip_unavailable_fragments: true,
         no_part: false,
         limit_rate: None,
+        no_overwrites: false,
     };
 
     let callback: Arc<dyn DownloadProgressCallback> =

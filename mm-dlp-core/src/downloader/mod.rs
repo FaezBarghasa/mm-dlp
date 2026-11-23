@@ -339,25 +339,31 @@ pub async fn stream_to_file_with_options(
 
     let mut downloaded_bytes: u64 = 0;
 
-    while let Some(chunk_res) = response
-        .chunk()
-        .await
-        .map_err(|e| EngineError::Network(e.to_string()))?
-    {
-        if cancel_token.is_cancelled() {
-            // Keep .part file intact on disk for subsequent resumption
-            let _ = file.flush().await;
-            return Err(EngineError::Cancelled);
+    let stream_res: Result<(), EngineError> = async {
+        while let Some(chunk_res) = response
+            .chunk()
+            .await
+            .map_err(|e| EngineError::Network(e.to_string()))?
+        {
+            if cancel_token.is_cancelled() {
+                return Err(EngineError::Cancelled);
+            }
+            if let Some(ref limiter) = rate_limiter {
+                limiter.acquire(chunk_res.len()).await;
+            }
+            file.write_all(&chunk_res).await?;
+            downloaded_bytes += chunk_res.len() as u64;
         }
-        if let Some(ref limiter) = rate_limiter {
-            limiter.acquire(chunk_res.len()).await;
-        }
-        file.write_all(&chunk_res).await?;
-        downloaded_bytes += chunk_res.len() as u64;
+        Ok(())
     }
+    .await;
 
-    file.flush().await?;
-    file.sync_all().await?;
+    // Guarantee data is cleanly flushed and synced to disk on completion, error, or cancellation
+    let _ = file.flush().await;
+    let _ = file.sync_all().await;
+
+    // Propagate cancellation or network error
+    stream_res?;
 
     if !no_part {
         tokio::fs::rename(&work_path, target_path).await?;

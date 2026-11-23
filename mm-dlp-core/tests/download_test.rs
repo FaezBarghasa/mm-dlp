@@ -192,3 +192,52 @@ async fn test_direct_download_with_no_part_flag() {
 
     let _ = tokio::fs::remove_file(&target_path).await;
 }
+
+#[tokio::test]
+async fn test_engine_no_overwrites_behavior() {
+    let temp_dir = std::env::temp_dir();
+    let existing_file = temp_dir.join("existing_track [no_ovw_123].mp3");
+    tokio::fs::write(&existing_file, b"pre-existing content")
+        .await
+        .unwrap();
+
+    let config = mm_dlp_core::EngineConfig {
+        no_overwrites: true,
+        ..Default::default()
+    };
+    let engine = mm_dlp_core::MmDlpEngine::new(config).unwrap();
+
+    let options = mm_dlp_core::engine::MediaDownloadOptions {
+        output_dir: temp_dir.to_string_lossy().to_string(),
+        output_template: "%(title)s [%(id)s].%(ext)s".into(),
+        no_overwrites: true,
+        ..Default::default()
+    };
+
+    struct TestCallback;
+    impl mm_dlp_core::DownloadProgressCallback for TestCallback {
+        fn on_status(&self, _status: String) {}
+        fn on_progress(&self, _p: f64) {}
+        fn on_error(&self, _err: mm_dlp_core::EngineError) {}
+        fn on_complete(&self, _res: mm_dlp_core::DownloadResult) {}
+    }
+
+    let url = "https://soundcloud.com/artist/existing_track";
+    let res = engine
+        .download_media(
+            "task_ovw".into(),
+            url.into(),
+            options,
+            std::sync::Arc::new(TestCallback),
+        )
+        .await
+        .expect("Should succeed by detecting existing file");
+
+    assert_eq!(res.file_path, existing_file.to_string_lossy());
+    assert_eq!(res.total_bytes, 20); // Length of "pre-existing content"
+
+    let final_content = tokio::fs::read(&existing_file).await.unwrap();
+    assert_eq!(final_content, b"pre-existing content");
+
+    let _ = tokio::fs::remove_file(&existing_file).await;
+}

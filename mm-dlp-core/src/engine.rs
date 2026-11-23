@@ -46,6 +46,7 @@ pub struct MediaDownloadOptions {
     pub skip_unavailable_fragments: bool,
     pub no_part: bool,
     pub limit_rate: Option<u64>,
+    pub no_overwrites: bool,
 }
 
 impl Default for MediaDownloadOptions {
@@ -67,6 +68,7 @@ impl Default for MediaDownloadOptions {
             skip_unavailable_fragments: true,
             no_part: false,
             limit_rate: None,
+            no_overwrites: false,
         }
     }
 }
@@ -401,8 +403,31 @@ impl MmDlpEngine {
                 let target_filename =
                     expand_output_template_with_meta(&options.output_template, &ctx);
                 let raw_target_path = output_dir_path.join(&target_filename);
-                resolve_duplicate_path(&raw_target_path)
+                if options.no_overwrites {
+                    raw_target_path
+                } else {
+                    resolve_duplicate_path(&raw_target_path)
+                }
             };
+
+            if options.no_overwrites && !is_stdout && final_target_path.exists() {
+                callback_run.on_status(format!(
+                    "{} has already been downloaded",
+                    final_target_path.display()
+                ));
+                let elapsed_millis = start_time.elapsed().as_millis() as u64;
+                let existing_bytes = tokio::fs::metadata(&final_target_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                let result = DownloadResult {
+                    file_path: final_target_path.to_string_lossy().to_string(),
+                    total_bytes: existing_bytes,
+                    elapsed_millis,
+                };
+                callback_run.on_complete(result.clone());
+                return Ok(result);
+            }
 
             let mut total_bytes = 0u64;
 

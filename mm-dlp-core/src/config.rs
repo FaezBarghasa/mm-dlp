@@ -25,6 +25,7 @@ pub struct EngineConfig {
     pub skip_unavailable_fragments: bool,
     pub no_part: bool,
     pub limit_rate: Option<u64>,
+    pub no_overwrites: bool,
 }
 
 impl EngineConfig {
@@ -107,6 +108,7 @@ impl Default for EngineConfig {
             skip_unavailable_fragments: true,
             no_part: false,
             limit_rate: None,
+            no_overwrites: false,
         }
     }
 }
