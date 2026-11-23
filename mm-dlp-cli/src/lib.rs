@@ -229,6 +229,10 @@ struct Cli {
     #[arg(long = "impersonate")]
     impersonate: Option<String>,
 
+    /// Custom DNS server(s) (comma-separated, e.g. "1.1.1.1,9.9.9.9" or "8.8.8.8"). Defaults to 1.1.1.1 with fallback to 9.9.9.9.
+    #[arg(long = "dns", alias = "dns-servers")]
+    dns: Option<String>,
+
     /// Streaming buffer size in bytes or unit (e.g. "100M", "512M", "2G", "max"). Defaults to 100M on mobile, 512M on desktop.
     #[arg(long = "buffer-size", default_value = "default")]
     buffer_size: String,
@@ -289,6 +293,7 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     config.cookies_file = cli.cookies.clone();
     config.cookies_from_browser = cli.cookies_from_browser.clone();
     config.impersonate_target = cli.impersonate.clone();
+    config.dns_servers = cli.dns.clone();
 
     if cli.verbose {
         if let Some(ref b) = cli.cookies_from_browser {
@@ -296,6 +301,11 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(ref imp) = cli.impersonate {
             eprintln!("[debug] Browser impersonation active: {}", imp);
+        }
+        if let Some(ref d) = cli.dns {
+            eprintln!("[debug] Custom DNS servers configured: {}", d);
+        } else {
+            eprintln!("[debug] DNS resolver configured with default 1.1.1.1 (primary) and 9.9.9.9 (fallback)");
         }
     }
 

@@ -386,3 +386,30 @@ fn test_gecko_impersonation_user_agent_and_headers() {
     // Verify User-Agent
     assert!(FIREFOX_GECKO_USER_AGENT.contains("Gecko/20100101 Firefox/"));
 }
+
+#[tokio::test]
+async fn test_custom_dns_configuration_and_fallback() {
+    use mm_dlp_core::client::dns::{CustomDnsResolver, default_dns_servers, parse_dns_servers};
+    use mm_dlp_core::config::EngineConfig;
+    use mm_dlp_core::downloader::build_http_client_with_config;
+
+    let defaults = default_dns_servers();
+    assert_eq!(defaults[0], "1.1.1.1:53".parse().unwrap());
+    assert_eq!(defaults[1], "9.9.9.9:53".parse().unwrap());
+
+    let custom = parse_dns_servers("8.8.8.8, 9.9.9.9:53; 1.1.1.1").unwrap();
+    assert_eq!(custom.len(), 3);
+    assert_eq!(custom[0], "8.8.8.8:53".parse().unwrap());
+    assert_eq!(custom[1], "9.9.9.9:53".parse().unwrap());
+    assert_eq!(custom[2], "1.1.1.1:53".parse().unwrap());
+
+    let resolver = CustomDnsResolver::new(custom);
+    let resolved = resolver.resolve_host("127.0.0.1", 443).await.unwrap();
+    assert_eq!(resolved[0], "127.0.0.1:443".parse().unwrap());
+
+    // Verify engine builds successfully with custom DNS
+    let mut config = EngineConfig::default();
+    config.dns_servers = Some("1.1.1.1, 9.9.9.9".to_string());
+    let client = build_http_client_with_config(&config).unwrap();
+    drop(client);
+}

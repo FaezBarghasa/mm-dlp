@@ -16,6 +16,7 @@ pub struct EngineConfig {
     pub buffer_size_bytes: Option<u64>,
     pub cookies_from_browser: Option<String>,
     pub impersonate_target: Option<String>,
+    pub dns_servers: Option<String>,
 }
 
 impl EngineConfig {
@@ -55,6 +56,7 @@ impl Default for EngineConfig {
             buffer_size_bytes: None,
             cookies_from_browser: None,
             impersonate_target: None,
+            dns_servers: None,
         }
     }
 }

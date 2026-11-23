@@ -119,6 +119,17 @@ pub fn build_http_client_with_config(
         builder = builder.proxy(proxy);
     }
 
+    // Configure DNS resolver: default to 1.1.1.1 with fallback to 9.9.9.9,
+    // or custom DNS servers if specified.
+    let dns_addrs = if let Some(ref dns_str) = config.dns_servers {
+        crate::client::dns::parse_dns_servers(dns_str)
+            .unwrap_or_else(|_| crate::client::dns::default_dns_servers())
+    } else {
+        crate::client::dns::default_dns_servers()
+    };
+    let dns_resolver = std::sync::Arc::new(crate::client::dns::CustomDnsResolver::new(dns_addrs));
+    builder = builder.dns_resolver(dns_resolver);
+
     builder
         .build()
         .map_err(|e| EngineError::Network(format!("Failed to build reqwest client: {}", e)))
