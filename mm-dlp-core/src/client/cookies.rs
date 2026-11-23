@@ -31,7 +31,11 @@ impl CookieItem {
             "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             domain_clean,
             subdomains_str,
-            if self.path.is_empty() { "/" } else { &self.path },
+            if self.path.is_empty() {
+                "/"
+            } else {
+                &self.path
+            },
             secure_str,
             self.expires,
             self.name,
@@ -59,8 +63,12 @@ impl CookieExtractor {
             .read(true)
             .open(&db_path)
             .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::PermissionDenied || e.kind() == std::io::ErrorKind::WouldBlock {
-                    EngineError::FileSystemError("Cookies database is locked by a running browser instance.".to_string())
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    || e.kind() == std::io::ErrorKind::WouldBlock
+                {
+                    EngineError::FileSystemError(
+                        "Cookies database is locked by a running browser instance.".to_string(),
+                    )
                 } else {
                     EngineError::FileSystemError(e.to_string())
                 }
@@ -80,8 +88,15 @@ impl CookieExtractor {
             "Direct browser cookie extraction is forbidden on iOS due to app sandbox isolation. Inject cookies via Netscape format or HTTP headers instead.".to_string(),
         ));
 
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "ios")))]
-        return Err(EngineError::OsApiError("Unsupported OS for cookie extraction".to_string()));
+        #[cfg(not(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "ios"
+        )))]
+        return Err(EngineError::OsApiError(
+            "Unsupported OS for cookie extraction".to_string(),
+        ));
     }
 
     /// Parse standard Netscape format cookie files, universal across all platforms including iOS.
@@ -137,7 +152,7 @@ impl CookieExtractor {
     #[cfg(target_os = "windows")]
     fn extract_windows(&self, _db_path: &Path) -> Result<Bytes, EngineError> {
         use std::ptr;
-        use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPTOAPI_BLOB};
+        use windows_sys::Win32::Security::Cryptography::{CRYPTOAPI_BLOB, CryptUnprotectData};
         use windows_sys::Win32::System::Memory::LocalFree;
 
         let local_state_path = self.browser_path.join("Local State");
@@ -145,16 +160,23 @@ impl CookieExtractor {
             .map_err(|e| EngineError::FileSystemError(e.to_string()))?;
 
         // Example JSON parsing logic would normally extract `os_crypt.encrypted_key` and base64 decode it here.
-        let key_bytes: Vec<u8> = vec![]; 
+        let key_bytes: Vec<u8> = vec![];
 
         // Strip the "DPAPI" version string prefix universally used by Chromium instances
-        let dpapi_key = if key_bytes.len() > 5 { &key_bytes[5..] } else { &key_bytes };
+        let dpapi_key = if key_bytes.len() > 5 {
+            &key_bytes[5..]
+        } else {
+            &key_bytes
+        };
 
         let mut data_in = CRYPTOAPI_BLOB {
             cbData: dpapi_key.len() as u32,
             pbData: dpapi_key.as_ptr() as *mut u8,
         };
-        let mut data_out = CRYPTOAPI_BLOB { cbData: 0, pbData: ptr::null_mut() };
+        let mut data_out = CRYPTOAPI_BLOB {
+            cbData: 0,
+            pbData: ptr::null_mut(),
+        };
 
         let success = unsafe {
             CryptUnprotectData(
@@ -169,11 +191,15 @@ impl CookieExtractor {
         };
 
         if success == 0 {
-            return Err(EngineError::DecryptionError("Windows DPAPI decryption failed".into()));
+            return Err(EngineError::DecryptionError(
+                "Windows DPAPI decryption failed".into(),
+            ));
         }
 
-        let decrypted_key = unsafe { std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize) }.to_vec();
-        
+        let decrypted_key =
+            unsafe { std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize) }
+                .to_vec();
+
         // Safely free the OS-allocated memory
         unsafe {
             LocalFree(data_out.pbData as _);
@@ -189,8 +215,9 @@ impl CookieExtractor {
         let service = "Chrome Safe Storage";
         let account = "Chrome";
 
-        let password = get_generic_password(service, account)
-            .map_err(|e| EngineError::DecryptionError(format!("Keychain decryption failed: {}", e)))?;
+        let password = get_generic_password(service, account).map_err(|e| {
+            EngineError::DecryptionError(format!("Keychain decryption failed: {}", e))
+        })?;
 
         Ok(Bytes::from(password.to_vec()))
     }
@@ -203,21 +230,31 @@ impl CookieExtractor {
             .map_err(|_| EngineError::OsApiError("No tokio runtime found".into()))?;
 
         handle.block_on(async {
-            let ss = SecretService::connect(EncryptionType::Dh).await
-                .map_err(|e| EngineError::DecryptionError(format!("SecretService connection failed: {}", e)))?;
+            let ss = SecretService::connect(EncryptionType::Dh)
+                .await
+                .map_err(|e| {
+                    EngineError::DecryptionError(format!("SecretService connection failed: {}", e))
+                })?;
 
-            let collection = ss.get_default_collection().await
-                .map_err(|e| EngineError::DecryptionError(format!("Failed to get default collection: {}", e)))?;
+            let collection = ss.get_default_collection().await.map_err(|e| {
+                EngineError::DecryptionError(format!("Failed to get default collection: {}", e))
+            })?;
 
-            let search = collection.search_items(std::collections::HashMap::from([("application", "chrome")])).await;
-            let items = search.map_err(|e| EngineError::DecryptionError(format!("Search failed: {}", e)))?;
+            let search = collection
+                .search_items(std::collections::HashMap::from([("application", "chrome")]))
+                .await;
+            let items = search
+                .map_err(|e| EngineError::DecryptionError(format!("Search failed: {}", e)))?;
 
             if let Some(item) = items.first() {
-                let secret = item.get_secret().await
-                    .map_err(|e| EngineError::DecryptionError(format!("Failed to get secret: {}", e)))?;
+                let secret = item.get_secret().await.map_err(|e| {
+                    EngineError::DecryptionError(format!("Failed to get secret: {}", e))
+                })?;
                 Ok(Bytes::from(secret))
             } else {
-                Err(EngineError::DecryptionError("No Chrome secret found in keyring".into()))
+                Err(EngineError::DecryptionError(
+                    "No Chrome secret found in keyring".into(),
+                ))
             }
         })
     }
@@ -262,7 +299,7 @@ impl FirefoxCookieExtractor {
     pub fn resolve_profile_path(spec: Option<&str>) -> Result<PathBuf, EngineError> {
         if let Some(s) = spec {
             let p = PathBuf::from(s);
-            if p.is_file() && p.file_name().map_or(false, |n| n == "cookies.sqlite") {
+            if p.is_file() && p.file_name().is_some_and(|n| n == "cookies.sqlite") {
                 return Ok(p.parent().unwrap_or(Path::new(".")).to_path_buf());
             }
             if p.is_dir() && p.join("cookies.sqlite").exists() {
@@ -278,20 +315,21 @@ impl FirefoxCookieExtractor {
 
             let ini_path = if root.join("profiles.ini").exists() {
                 root.join("profiles.ini")
-            } else if root.parent().map_or(false, |p| p.join("profiles.ini").exists()) {
+            } else if root
+                .parent()
+                .is_some_and(|p| p.join("profiles.ini").exists())
+            {
                 root.parent().unwrap().join("profiles.ini")
             } else {
                 PathBuf::new()
             };
 
-            if ini_path.exists() {
-                if let Ok(ini_content) = std::fs::read_to_string(&ini_path) {
-                    if let Some(profile_dir) = Self::parse_profiles_ini(&ini_content, root, spec) {
-                        if profile_dir.join("cookies.sqlite").exists() {
-                            return Ok(profile_dir);
-                        }
-                    }
-                }
+            if ini_path.exists()
+                && let Ok(ini_content) = std::fs::read_to_string(&ini_path)
+                && let Some(profile_dir) = Self::parse_profiles_ini(&ini_content, root, spec)
+                && profile_dir.join("cookies.sqlite").exists()
+            {
+                return Ok(profile_dir);
             }
 
             let scan_dirs = vec![root.clone(), root.join("Profiles")];
@@ -303,10 +341,10 @@ impl FirefoxCookieExtractor {
                         if path.is_dir() {
                             let sqlite = path.join("cookies.sqlite");
                             if sqlite.exists() {
-                                if let Some(req_name) = spec {
-                                    if path.to_string_lossy().contains(req_name) {
-                                        return Ok(path);
-                                    }
+                                if let Some(req_name) = spec
+                                    && path.to_string_lossy().contains(req_name)
+                                {
+                                    return Ok(path);
                                 }
                                 let mtime = entry.metadata().and_then(|m| m.modified()).ok();
                                 candidates.push((path, mtime));
@@ -317,7 +355,7 @@ impl FirefoxCookieExtractor {
             }
 
             if !candidates.is_empty() {
-                candidates.sort_by(|a, b| b.1.cmp(&a.1));
+                candidates.sort_by_key(|a| std::cmp::Reverse(a.1));
                 return Ok(candidates[0].0.clone());
             }
         }
@@ -327,7 +365,11 @@ impl FirefoxCookieExtractor {
         ))
     }
 
-    pub fn parse_profiles_ini(ini_content: &str, base_dir: &Path, spec: Option<&str>) -> Option<PathBuf> {
+    pub fn parse_profiles_ini(
+        ini_content: &str,
+        base_dir: &Path,
+        spec: Option<&str>,
+    ) -> Option<PathBuf> {
         let mut default_path = None;
         let mut matched_path = None;
         let mut current_path: Option<String> = None;
@@ -350,10 +392,10 @@ impl FirefoxCookieExtractor {
                 };
 
                 if let Some(s) = spec {
-                    if let Some(name) = current_name {
-                        if name.eq_ignore_ascii_case(s) {
-                            *matched_path = Some(resolved.clone());
-                        }
+                    if let Some(name) = current_name
+                        && name.eq_ignore_ascii_case(s)
+                    {
+                        *matched_path = Some(resolved.clone());
                     }
                     if rel_or_abs.contains(s) {
                         *matched_path = Some(resolved.clone());
@@ -477,10 +519,8 @@ impl FirefoxCookieExtractor {
             })?;
 
             let mut items = Vec::new();
-            for r in rows {
-                if let Ok(item) = r {
-                    items.push(item);
-                }
+            for item in rows.flatten() {
+                items.push(item);
             }
             Ok(items)
         })();
@@ -501,7 +541,9 @@ impl FirefoxCookieExtractor {
         let sqlite_path = profile_dir.join("cookies.sqlite");
         let items = Self::extract_from_sqlite(&sqlite_path)?;
 
-        let mut out = String::from("# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n# Extracted by mm-dlp (Firefox/Gecko)\n\n");
+        let mut out = String::from(
+            "# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n# Extracted by mm-dlp (Firefox/Gecko)\n\n",
+        );
         for item in &items {
             out.push_str(&item.to_netscape_line());
             out.push('\n');
@@ -523,12 +565,10 @@ impl BrowserCookieExtractor {
             "firefox" | "gecko" | "librewolf" | "waterfox" | "torbrowser" => {
                 FirefoxCookieExtractor::extract_to_netscape(profile)
             }
-            "chrome" | "chromium" | "brave" | "edge" => {
-                Err(EngineError::FileSystemError(format!(
-                    "Direct cookie extraction for '{}' requires browser profile path.",
-                    browser
-                )))
-            }
+            "chrome" | "chromium" | "brave" | "edge" => Err(EngineError::FileSystemError(format!(
+                "Direct cookie extraction for '{}' requires browser profile path.",
+                browser
+            ))),
             other => Err(EngineError::FileSystemError(format!(
                 "Unsupported browser '{}' for cookie extraction. Supported: firefox (gecko), librewolf, waterfox, chrome, chromium, brave, edge",
                 other
@@ -551,8 +591,14 @@ mod tests {
 ";
         let parsed = CookieExtractor::parse_netscape_cookies(sample);
         assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0], ("SID".to_string(), "sample_sid_value".to_string()));
-        assert_eq!(parsed[1], ("HSID".to_string(), "sample_hsid_value".to_string()));
+        assert_eq!(
+            parsed[0],
+            ("SID".to_string(), "sample_sid_value".to_string())
+        );
+        assert_eq!(
+            parsed[1],
+            ("HSID".to_string(), "sample_hsid_value".to_string())
+        );
 
         let items = CookieExtractor::parse_netscape_cookie_items(sample);
         assert_eq!(items.len(), 2);

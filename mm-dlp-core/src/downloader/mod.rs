@@ -81,15 +81,17 @@ pub fn build_http_client_with_config(
 
     // Configure Cookie Jar if cookies_file or cookies_from_browser is specified
     let mut cookie_items = Vec::new();
-    if let Some(ref path) = config.cookies_file {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            cookie_items.extend(crate::client::cookies::CookieExtractor::parse_netscape_cookie_items(&content));
-        }
+    if let Some(ref path) = config.cookies_file
+        && let Ok(content) = std::fs::read_to_string(path)
+    {
+        cookie_items
+            .extend(crate::client::cookies::CookieExtractor::parse_netscape_cookie_items(&content));
     }
-    if let Some(ref browser_spec) = config.cookies_from_browser {
-        if let Ok(content) = crate::client::cookies::BrowserCookieExtractor::extract(browser_spec) {
-            cookie_items.extend(crate::client::cookies::CookieExtractor::parse_netscape_cookie_items(&content));
-        }
+    if let Some(ref browser_spec) = config.cookies_from_browser
+        && let Ok(content) = crate::client::cookies::BrowserCookieExtractor::extract(browser_spec)
+    {
+        cookie_items
+            .extend(crate::client::cookies::CookieExtractor::parse_netscape_cookie_items(&content));
     }
 
     if !cookie_items.is_empty() {
@@ -97,7 +99,11 @@ pub fn build_http_client_with_config(
         for cookie in &cookie_items {
             let scheme = if cookie.secure { "https" } else { "http" };
             let domain_clean = cookie.domain.trim_start_matches('.');
-            let path_clean = if cookie.path.is_empty() { "/" } else { &cookie.path };
+            let path_clean = if cookie.path.is_empty() {
+                "/"
+            } else {
+                &cookie.path
+            };
             let url_str = format!("{}://{}{}", scheme, domain_clean, path_clean);
             if let Ok(url) = url_str.parse::<reqwest::Url>() {
                 let cookie_str = format!("{}={}", cookie.name, cookie.value);

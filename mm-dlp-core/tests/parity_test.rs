@@ -292,3 +292,97 @@ fn test_sanitize_url_preserves_youtube_id() {
     let clean = sanitize_url(raw).unwrap();
     assert_eq!(clean, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
 }
+
+#[test]
+fn test_gecko_firefox_cookie_extraction_parity() {
+    use mm_dlp_core::client::cookies::{BrowserCookieExtractor, FirefoxCookieExtractor};
+    let temp_root = std::env::temp_dir().join(format!("test_ff_profile_{}", std::process::id()));
+    let profile_dir = temp_root.join("Profiles/default-release");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+
+    let ini_content = "\
+[Profile0]
+Name=default-release
+IsRelative=1
+Path=Profiles/default-release
+Default=1
+";
+    std::fs::write(temp_root.join("profiles.ini"), ini_content).unwrap();
+
+    let db_path = profile_dir.join("cookies.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE moz_cookies (
+            id INTEGER PRIMARY KEY,
+            originAttributes TEXT,
+            name TEXT,
+            value TEXT,
+            host TEXT,
+            path TEXT,
+            expiry INTEGER,
+            lastAccessed INTEGER,
+            creationTime INTEGER,
+            isSecure INTEGER,
+            isHttpOnly INTEGER,
+            inBrowserElement INTEGER,
+            sameSite INTEGER,
+            rawSameSite INTEGER,
+            schemeMap INTEGER
+        );
+        INSERT INTO moz_cookies (name, value, host, path, expiry, isSecure, isHttpOnly)
+        VALUES ('LOGIN_INFO', 'gecko_session_test', '.youtube.com', '/', 1900000000, 1, 1);
+        ",
+    )
+    .unwrap();
+    drop(conn);
+
+    let extracted = FirefoxCookieExtractor::extract_from_sqlite(&db_path).unwrap();
+    assert_eq!(extracted.len(), 1);
+    assert_eq!(extracted[0].name, "LOGIN_INFO");
+    assert_eq!(extracted[0].value, "gecko_session_test");
+    assert!(extracted[0].secure);
+    assert!(extracted[0].http_only);
+
+    let netscape =
+        FirefoxCookieExtractor::extract_to_netscape(Some(profile_dir.to_str().unwrap())).unwrap();
+    assert!(
+        netscape
+            .contains(".youtube.com\tTRUE\t/\tTRUE\t1900000000\tLOGIN_INFO\tgecko_session_test")
+    );
+
+    let custom_extracted =
+        BrowserCookieExtractor::extract(&format!("firefox:{}", profile_dir.display())).unwrap();
+    assert!(custom_extracted.contains("LOGIN_INFO\tgecko_session_test"));
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+}
+
+#[test]
+fn test_gecko_impersonation_user_agent_and_headers() {
+    use mm_dlp_core::client::h2::{BrowserProfile, H2Impersonator};
+    use mm_dlp_core::config::{EngineConfig, FIREFOX_GECKO_USER_AGENT};
+    use mm_dlp_core::downloader::build_http_client_with_config;
+
+    let mut config = EngineConfig::default();
+    config.impersonate_target = Some("firefox".to_string());
+    assert!(config.is_gecko_or_firefox());
+
+    let client = build_http_client_with_config(&config).unwrap();
+    drop(client);
+
+    // Verify Firefox/Gecko HTTP/2 pseudo-header order: :method, :path, :authority, :scheme
+    let gecko_headers = H2Impersonator::format_pseudo_headers_for(
+        BrowserProfile::Firefox,
+        "GET",
+        "manifest.googlevideo.com",
+        "https",
+        "/api/playback",
+    );
+    assert_eq!(gecko_headers[0].0, ":method");
+    assert_eq!(gecko_headers[1].0, ":path");
+    assert_eq!(gecko_headers[2].0, ":authority");
+    assert_eq!(gecko_headers[3].0, ":scheme");
+
+    // Verify User-Agent
+    assert!(FIREFOX_GECKO_USER_AGENT.contains("Gecko/20100101 Firefox/"));
+}

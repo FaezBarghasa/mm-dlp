@@ -1,5 +1,5 @@
-use crate::client::h2::BrowserProfile;
 use crate::client::EngineError;
+use crate::client::h2::BrowserProfile;
 use quiche;
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::net::UdpSocket;
@@ -27,22 +27,33 @@ impl H3Impersonator {
         let mut quic_config = quiche::Config::new(quiche::PROTOCOL_VERSION)
             .map_err(|e| EngineError::OsApiError(format!("Failed to create QUIC config: {}", e)))?;
 
-        quic_config.set_application_protos(quiche::h3::APPLICATION_PROTOCOL)
+        quic_config
+            .set_application_protos(quiche::h3::APPLICATION_PROTOCOL)
             .map_err(|e| EngineError::OsApiError(format!("Failed to set H3 ALPN: {}", e)))?;
         quic_config.set_max_idle_timeout(CHROME_H3_MAX_IDLE_TIMEOUT);
         quic_config.set_initial_max_data(CHROME_H3_INITIAL_MAX_DATA);
 
         match profile {
             BrowserProfile::Chrome => {
-                quic_config.set_initial_max_stream_data_bidi_local(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
-                quic_config.set_initial_max_stream_data_bidi_remote(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
-                quic_config.set_initial_max_stream_data_uni(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.set_initial_max_stream_data_bidi_local(
+                    CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                );
+                quic_config.set_initial_max_stream_data_bidi_remote(
+                    CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                );
+                quic_config
+                    .set_initial_max_stream_data_uni(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
                 quic_config.grease(true);
             }
             BrowserProfile::Firefox => {
-                quic_config.set_initial_max_stream_data_bidi_local(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
-                quic_config.set_initial_max_stream_data_bidi_remote(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
-                quic_config.set_initial_max_stream_data_uni(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.set_initial_max_stream_data_bidi_local(
+                    GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                );
+                quic_config.set_initial_max_stream_data_bidi_remote(
+                    GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                );
+                quic_config
+                    .set_initial_max_stream_data_uni(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
                 quic_config.grease(false);
             }
         }
@@ -79,15 +90,21 @@ impl H3Impersonator {
 
     /// Binds a UDP socket for QUIC traffic, matching the IP version of the target address.
     pub async fn bind_socket(peer_addr: &SocketAddr) -> Result<UdpSocket, EngineError> {
-        let bind_addr = if peer_addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
-        UdpSocket::bind(bind_addr).await
+        let bind_addr = if peer_addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
+        UdpSocket::bind(bind_addr)
+            .await
             .map_err(|e| EngineError::OsApiError(format!("Failed to bind UDP socket: {}", e)))
     }
 
     /// Resolves a hostname to a SocketAddr, preferring IPv6 (AAAA) records over IPv4.
     pub fn resolve_ipv6_preferred(host: &str, port: u16) -> Result<SocketAddr, EngineError> {
         let host = host.trim_start_matches('[').trim_end_matches(']');
-        let addrs = (host, port).to_socket_addrs()
+        let addrs = (host, port)
+            .to_socket_addrs()
             .map_err(|e| EngineError::OsApiError(format!("DNS resolution failed: {}", e)))?;
 
         let mut ipv4_fallback = None;
@@ -100,7 +117,8 @@ impl H3Impersonator {
             }
         }
 
-        ipv4_fallback.ok_or_else(|| EngineError::OsApiError("No valid IP addresses found".to_string()))
+        ipv4_fallback
+            .ok_or_else(|| EngineError::OsApiError("No valid IP addresses found".to_string()))
     }
 
     /// Formats request headers for HTTP/3 matching the specified browser profile ordering.
@@ -144,7 +162,14 @@ impl H3Impersonator {
         path: &str,
         resume_offset: Option<u64>,
     ) -> Vec<quiche::h3::Header> {
-        Self::format_request_headers_for(BrowserProfile::Chrome, method, authority, scheme, path, resume_offset)
+        Self::format_request_headers_for(
+            BrowserProfile::Chrome,
+            method,
+            authority,
+            scheme,
+            path,
+            resume_offset,
+        )
     }
 
     /// Initializes a quiche connection tailored for the dual-stack IPv6 socket,
@@ -158,18 +183,19 @@ impl H3Impersonator {
         let peer_addr = Self::resolve_ipv6_preferred(host, port)?;
         let socket = Self::bind_socket(&peer_addr).await?;
 
-        // Generate a localized SCID (Source Connection ID) 
+        // Generate a localized SCID (Source Connection ID)
         let mut scid = [0; quiche::MAX_CONN_ID_LEN];
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        
+
         for (i, byte) in scid.iter_mut().enumerate() {
             *byte = ((timestamp >> (i % 8 * 8)) & 0xFF) as u8;
         }
 
-        let local_addr = socket.local_addr()
+        let local_addr = socket
+            .local_addr()
             .map_err(|e| EngineError::OsApiError(format!("Failed to get local addr: {}", e)))?;
 
         let clean_host = host.trim_start_matches('[').trim_end_matches(']');
@@ -186,12 +212,16 @@ impl H3Impersonator {
             local_addr,
             peer_addr,
             &mut self.quic_config,
-        ).map_err(|e| EngineError::OsApiError(format!("QUIC connection initialization failed: {}", e)))?;
+        )
+        .map_err(|e| {
+            EngineError::OsApiError(format!("QUIC connection initialization failed: {}", e))
+        })?;
 
         // Apply QUIC session ticket for 0-RTT download connection recovery
         if let Some(session) = session_data {
-            conn.set_session(session)
-                .map_err(|e| EngineError::OsApiError(format!("Failed to restore QUIC session: {}", e)))?;
+            conn.set_session(session).map_err(|e| {
+                EngineError::OsApiError(format!("Failed to restore QUIC session: {}", e))
+            })?;
         }
 
         Ok((conn, socket))

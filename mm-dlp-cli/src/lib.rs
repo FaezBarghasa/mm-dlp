@@ -225,6 +225,10 @@ struct Cli {
     #[arg(long = "embed-subs", alias = "embed-sub")]
     embed_subs: bool,
 
+    /// Impersonate browser (e.g. "firefox", "gecko", "chrome")
+    #[arg(long = "impersonate")]
+    impersonate: Option<String>,
+
     /// Streaming buffer size in bytes or unit (e.g. "100M", "512M", "2G", "max"). Defaults to 100M on mobile, 512M on desktop.
     #[arg(long = "buffer-size", default_value = "default")]
     buffer_size: String,
@@ -283,6 +287,17 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
     config.proxy = cli.proxy.clone();
     config.cookies_file = cli.cookies.clone();
+    config.cookies_from_browser = cli.cookies_from_browser.clone();
+    config.impersonate_target = cli.impersonate.clone();
+
+    if cli.verbose {
+        if let Some(ref b) = cli.cookies_from_browser {
+            eprintln!("[debug] Cookies from browser requested: {}", b);
+        }
+        if let Some(ref imp) = cli.impersonate {
+            eprintln!("[debug] Browser impersonation active: {}", imp);
+        }
+    }
 
     let buffer_size_bytes =
         match mm_dlp_core::downloader::flusher::parse_buffer_size(&cli.buffer_size) {

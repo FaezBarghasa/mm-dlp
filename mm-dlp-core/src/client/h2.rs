@@ -77,7 +77,12 @@ impl H2Impersonator {
     }
 
     /// Enforces absolute chrome-matched pseudo-header ordering inside outgoing request headers (backward compatible).
-    pub fn format_pseudo_headers(method: &str, authority: &str, scheme: &str, path: &str) -> Vec<(&'static str, Bytes)> {
+    pub fn format_pseudo_headers(
+        method: &str,
+        authority: &str,
+        scheme: &str,
+        path: &str,
+    ) -> Vec<(&'static str, Bytes)> {
         Self::format_pseudo_headers_for(BrowserProfile::Chrome, method, authority, scheme, path)
     }
 }
@@ -109,12 +114,8 @@ mod tests {
 
     #[test]
     fn test_chrome_pseudo_headers_order() {
-        let headers = H2Impersonator::format_pseudo_headers(
-            "GET",
-            "example.com",
-            "https",
-            "/video",
-        );
+        let headers =
+            H2Impersonator::format_pseudo_headers("GET", "example.com", "https", "/video");
         assert_eq!(headers[0].0, ":method");
         assert_eq!(headers[1].0, ":authority");
         assert_eq!(headers[2].0, ":scheme");
