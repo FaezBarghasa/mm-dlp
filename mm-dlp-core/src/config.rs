@@ -7,6 +7,7 @@ pub struct EngineConfig {
     pub timeout_seconds: u64,
     pub proxy: Option<String>,
     pub cookies_file: Option<String>,
+    pub buffer_size_bytes: Option<u64>,
 }
 
 impl Default for EngineConfig {
@@ -17,6 +18,7 @@ impl Default for EngineConfig {
             timeout_seconds: 30,
             proxy: None,
             cookies_file: None,
+            buffer_size_bytes: None,
         }
     }
 }

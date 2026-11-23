@@ -7,24 +7,139 @@ use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+/// Returns the detected system physical RAM in bytes.
+pub fn get_system_ram_bytes() -> usize {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let mut info = std::mem::zeroed::<libc::sysinfo>();
+        if libc::sysinfo(&mut info) == 0 {
+            let total = (info.totalram as u64) * (info.mem_unit as u64);
+            (total as usize).max(512 * 1024 * 1024)
+        } else {
+            512 * 1024 * 1024
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut mib = [libc::CTL_HW, libc::HW_MEMSIZE];
+        let mut mem_size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        unsafe {
+            if libc::sysctl(
+                mib.as_mut_ptr(),
+                2,
+                &mut mem_size as *mut u64 as *mut libc::c_void,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            ) == 0 {
+                (mem_size as usize).max(512 * 1024 * 1024)
+            } else {
+                512 * 1024 * 1024
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        unsafe {
+            let mut mem_status = std::mem::zeroed::<MEMORYSTATUSEX>();
+            mem_status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+            if GlobalMemoryStatusEx(&mut mem_status) != 0 {
+                (mem_status.ullTotalPhys as usize).max(512 * 1024 * 1024)
+            } else {
+                512 * 1024 * 1024
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        {
+            100 * 1024 * 1024
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        {
+            512 * 1024 * 1024
+        }
+    }
+}
+
+/// Returns the platform default streaming buffer size:
+/// - Mobile OS (iOS, Android): at least 100 MiB
+/// - Desktop OS (Linux, macOS, Windows): 512 MiB
+pub fn default_streaming_buffer_size() -> usize {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    {
+        100 * 1024 * 1024 // 100 MiB on mobile
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        512 * 1024 * 1024 // 512 MiB on desktop OS
+    }
+}
+
+/// Parses a human-readable or unit-based buffer size string (e.g. "100M", "512M", "2G", "max").
+pub fn parse_buffer_size(s: &str) -> Result<usize, String> {
+    let s = s.trim().to_lowercase();
+    if s == "default" || s.is_empty() {
+        return Ok(default_streaming_buffer_size());
+    }
+    if s == "max" {
+        return Ok(get_system_ram_bytes());
+    }
+    if let Ok(bytes) = s.parse::<usize>() {
+        return Ok(bytes);
+    }
+    if let Some(num) = s.strip_suffix("gb").or_else(|| s.strip_suffix('g')) {
+        let val: f64 = num.parse().map_err(|e| format!("Invalid GB value: {}", e))?;
+        return Ok((val * 1024.0 * 1024.0 * 1024.0) as usize);
+    }
+    if let Some(num) = s.strip_suffix("mb").or_else(|| s.strip_suffix('m')) {
+        let val: f64 = num.parse().map_err(|e| format!("Invalid MB value: {}", e))?;
+        return Ok((val * 1024.0 * 1024.0) as usize);
+    }
+    if let Some(num) = s.strip_suffix("kb").or_else(|| s.strip_suffix('k')) {
+        let val: f64 = num.parse().map_err(|e| format!("Invalid KB value: {}", e))?;
+        return Ok((val * 1024.0) as usize);
+    }
+    Err(format!("Unrecognized buffer size format: {}", s))
+}
+
 pub struct SequentialFlusher {
     heap: BinaryHeap<SequencedChunk>,
     next_expected_index: usize,
     max_backlog: usize,
+    current_buffered_bytes: usize,
+    max_buffer_bytes: usize,
 }
 
 impl SequentialFlusher {
     pub fn new() -> Self {
+        let max_buffer = default_streaming_buffer_size();
+        let max_backlog = (max_buffer / (64 * 1024)).max(64);
         Self {
             heap: BinaryHeap::new(),
             next_expected_index: 0,
-            max_backlog: 64,
+            max_backlog,
+            current_buffered_bytes: 0,
+            max_buffer_bytes: max_buffer,
         }
     }
 
     pub fn with_max_backlog(mut self, max_backlog: usize) -> Self {
         self.max_backlog = max_backlog.max(4);
         self
+    }
+
+    pub fn with_max_buffer_bytes(mut self, max_buffer_bytes: usize) -> Self {
+        self.max_buffer_bytes = max_buffer_bytes.max(1024 * 1024);
+        self.max_backlog = (self.max_buffer_bytes / (64 * 1024)).max(64);
+        self
+    }
+
+    pub fn max_buffer_bytes(&self) -> usize {
+        self.max_buffer_bytes
     }
 
     /// Flush sequenced chunks to any asynchronous writer.
@@ -39,12 +154,19 @@ impl SequentialFlusher {
         while self.next_expected_index < total_segments {
             match rx.recv().await {
                 Some(Ok(chunk)) => {
+                    self.current_buffered_bytes += chunk.data.len();
                     self.heap.push(chunk);
 
-                    if self.heap.len() > self.max_backlog {
+                    if self.heap.len() > self.max_backlog
+                        || self.current_buffered_bytes > self.max_buffer_bytes
+                    {
                         return Err(EngineError::IoError(format!(
-                            "SequentialFlusher backlog exceeded maximum window of {} chunks waiting for index {}",
-                            self.max_backlog, self.next_expected_index
+                            "SequentialFlusher backlog exceeded limits (chunks: {}/{}, bytes: {}/{} bytes) waiting for index {}",
+                            self.heap.len(),
+                            self.max_backlog,
+                            self.current_buffered_bytes,
+                            self.max_buffer_bytes,
+                            self.next_expected_index
                         )));
                     }
 
@@ -52,6 +174,8 @@ impl SequentialFlusher {
                     while let Some(top) = self.heap.peek() {
                         if top.index == self.next_expected_index {
                             if let Some(popped) = self.heap.pop() {
+                                self.current_buffered_bytes =
+                                    self.current_buffered_bytes.saturating_sub(popped.data.len());
                                 total_bytes += popped.data.len() as u64;
                                 writer
                                     .write_all(&popped.data)
