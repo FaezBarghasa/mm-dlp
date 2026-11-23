@@ -173,6 +173,26 @@ pub struct Cli {
     #[arg(long = "yes-playlist")]
     pub yes_playlist: bool,
 
+    /// Playlist video items to download. Specify indices separated by commas and/or ranges (e.g. 1,2,5-8, 1:5)
+    #[arg(short = 'I', long = "playlist-items")]
+    pub playlist_items: Option<String>,
+
+    /// Playlist video to start at (default is 1)
+    #[arg(long = "playlist-start")]
+    pub playlist_start: Option<usize>,
+
+    /// Playlist video to end at (default is last)
+    #[arg(long = "playlist-end")]
+    pub playlist_end: Option<usize>,
+
+    /// Do not use .part files - write directly into output file
+    #[arg(long = "no-part")]
+    pub no_part: bool,
+
+    /// Maximum download rate in bytes per second (e.g. 50K or 4.2M)
+    #[arg(short = 'r', long = "limit-rate")]
+    pub limit_rate: Option<String>,
+
     /// Write media stream directly to stdout without intermediate files (alias for -o -)
     #[arg(long = "stdout")]
     pub stdout: bool,
@@ -393,6 +413,18 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(timeout) = cli.socket_timeout {
         config.timeout_seconds = timeout;
+    }
+    config.no_part = cli.no_part;
+    if let Some(ref r_str) = cli.limit_rate {
+        match mm_dlp_core::downloader::limiter::parse_rate_limit(r_str) {
+            Ok(limit) => config.limit_rate = Some(limit),
+            Err(e) => {
+                eprintln!("[error] Invalid --limit-rate '{}': {}", r_str, e);
+                if !cli.ignore_errors {
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     let fragment_retries = match cli.fragment_retries.to_lowercase().as_str() {
@@ -736,6 +768,8 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             buffer_size_bytes: Some(buffer_size_bytes),
             fragment_retries,
             skip_unavailable_fragments,
+            no_part: cli.no_part,
+            limit_rate: config.limit_rate,
         };
 
         if cli.write_info_json && !is_stdout {
@@ -752,18 +786,6 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                         "[info] Writing video metadata as JSON to: {:?}",
                         info_json_path
                     );
-                }
-            }
-        }
-
-        if cli.write_info_json && !is_stdout {
-            let info_json_path = std::path::Path::new(&options.output_dir)
-                .join(format!("{}.info.json", info.id));
-            if let Ok(json_str) = serde_json::to_string_pretty(&info) {
-                if let Err(e) = std::fs::write(&info_json_path, json_str) {
-                    eprintln!("[warning] Failed to write info json to {:?}: {}", info_json_path, e);
-                } else if !cli.quiet {
-                    println!("[info] Writing video metadata as JSON to: {:?}", info_json_path);
                 }
             }
         }

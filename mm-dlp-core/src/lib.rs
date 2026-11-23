@@ -20,7 +20,7 @@ pub mod utils;
 pub use config::{DownloadConfig, DownloadResult, EngineConfig, MediaMetadata, StreamCandidate};
 pub use engine::{DownloadProgressCallback, MmDlpEngine};
 pub use error::EngineError;
-pub use playlist::{Playlist, PlaylistTrack};
+pub use playlist::{Playlist, PlaylistTrack, slice_playlist_items};
 
 #[cfg(test)]
 mod tests {
