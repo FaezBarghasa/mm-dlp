@@ -8,6 +8,7 @@ use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use super::fetch_bytes_with_retry;
 use super::flusher::SequentialFlusher;
 use super::parallel::SequencedChunk;
 use crate::error::EngineError;
@@ -40,6 +41,8 @@ pub struct HlsPlaylist {
 pub struct HlsDownloader {
     client: Client,
     concurrency: usize,
+    retries: usize,
+    skip_unavailable_fragments: bool,
 }
 
 impl HlsDownloader {
@@ -47,7 +50,19 @@ impl HlsDownloader {
         Self {
             client,
             concurrency: concurrency.max(1),
+            retries: 10,
+            skip_unavailable_fragments: true,
         }
+    }
+
+    pub fn with_retries(mut self, retries: usize) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    pub fn with_skip_unavailable(mut self, skip: bool) -> Self {
+        self.skip_unavailable_fragments = skip;
+        self
     }
 
     /// Parse an M3U8 manifest content string into structured HlsPlaylist.
@@ -247,6 +262,8 @@ impl HlsDownloader {
 
         let semaphore = Arc::new(Semaphore::new(effective_concurrency));
         let mut join_set = JoinSet::new();
+        let retries = self.retries;
+        let skip_unavailable = self.skip_unavailable_fragments;
 
         for seg in playlist.segments {
             let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
@@ -262,14 +279,24 @@ impl HlsDownloader {
                     return Err(EngineError::Cancelled);
                 }
 
-                let bytes = client
-                    .get(&seg.url)
-                    .send()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("Segment fetch failed: {}", e)))?
-                    .bytes()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("Segment read failed: {}", e)))?;
+                let fetch_res = fetch_bytes_with_retry(&client, &seg.url, &token, retries).await;
+                let bytes = match fetch_res {
+                    Ok(b) => b,
+                    Err(e) => {
+                        if skip_unavailable {
+                            eprintln!(
+                                "[download] Skipping unavailable HLS fragment #{} ({}): {}",
+                                seg.index, seg.url, e
+                            );
+                            return Ok(SequencedChunk {
+                                index: seg.index,
+                                data: Bytes::new(),
+                            });
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                };
 
                 // If segment has encryption key, decrypt it using cached key if available
                 let data = if let Some(ref key_info) = seg.key {
@@ -279,18 +306,15 @@ impl HlsDownloader {
                             if let Some(k) = cached {
                                 k
                             } else {
-                                let fetched = client
-                                    .get(&key_info.uri)
-                                    .send()
-                                    .await
-                                    .map_err(|e| {
-                                        EngineError::Network(format!("HLS key fetch failed: {}", e))
-                                    })?
-                                    .bytes()
-                                    .await
-                                    .map_err(|e| {
-                                        EngineError::Network(format!("HLS key read failed: {}", e))
-                                    })?;
+                                let fetched =
+                                    fetch_bytes_with_retry(&client, &key_info.uri, &token, retries)
+                                        .await
+                                        .map_err(|e| {
+                                            EngineError::Network(format!(
+                                                "HLS key fetch failed: {}",
+                                                e
+                                            ))
+                                        })?;
                                 cache
                                     .write()
                                     .await
@@ -402,6 +426,8 @@ impl HlsDownloader {
         let poll_interval = Duration::from_secs_f64((target_dur / 2.0).max(0.5));
         let mut refresh_interval = tokio::time::interval(poll_interval);
         refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let retries = self.retries;
+        let skip_unavailable = self.skip_unavailable_fragments;
 
         loop {
             if cancel_token.is_cancelled() {
@@ -436,18 +462,25 @@ impl HlsDownloader {
                             return Err(EngineError::Cancelled);
                         }
 
-                        let bytes = client
-                            .get(&seg_url)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                EngineError::Network(format!("Live segment fetch failed: {}", e))
-                            })?
-                            .bytes()
-                            .await
-                            .map_err(|e| {
-                                EngineError::Network(format!("Live segment read failed: {}", e))
-                            })?;
+                        let fetch_res =
+                            fetch_bytes_with_retry(&client, &seg_url, &token, retries).await;
+                        let bytes = match fetch_res {
+                            Ok(b) => b,
+                            Err(e) => {
+                                if skip_unavailable {
+                                    eprintln!(
+                                        "[download] Skipping unavailable live HLS fragment #{} ({}): {}",
+                                        assigned_index, seg_url, e
+                                    );
+                                    return Ok(SequencedChunk {
+                                        index: assigned_index,
+                                        data: Bytes::new(),
+                                    });
+                                } else {
+                                    return Err(e);
+                                }
+                            }
+                        };
 
                         let data = if let Some(ref key_info) = seg_key {
                             if key_info.method == "AES-128" {
@@ -456,24 +489,19 @@ impl HlsDownloader {
                                     if let Some(k) = cached {
                                         k
                                     } else {
-                                        let fetched = client
-                                            .get(&key_info.uri)
-                                            .send()
-                                            .await
-                                            .map_err(|e| {
-                                                EngineError::Network(format!(
-                                                    "HLS key fetch failed: {}",
-                                                    e
-                                                ))
-                                            })?
-                                            .bytes()
-                                            .await
-                                            .map_err(|e| {
-                                                EngineError::Network(format!(
-                                                    "HLS key read failed: {}",
-                                                    e
-                                                ))
-                                            })?;
+                                        let fetched = fetch_bytes_with_retry(
+                                            &client,
+                                            &key_info.uri,
+                                            &token,
+                                            retries,
+                                        )
+                                        .await
+                                        .map_err(|e| {
+                                            EngineError::Network(format!(
+                                                "HLS key fetch failed: {}",
+                                                e
+                                            ))
+                                        })?;
                                         cache
                                             .write()
                                             .await
@@ -585,6 +613,8 @@ impl HlsDownloader {
         let key_cache: Arc<RwLock<HashMap<String, Bytes>>> = Arc::new(RwLock::new(HashMap::new()));
         let semaphore = Arc::new(Semaphore::new(self.concurrency));
         let mut join_set = JoinSet::new();
+        let retries = self.retries;
+        let skip_unavailable = self.skip_unavailable_fragments;
 
         for seg in playlist.segments {
             let permit =
@@ -601,14 +631,24 @@ impl HlsDownloader {
                     return Err(EngineError::Cancelled);
                 }
 
-                let bytes = client
-                    .get(&seg.url)
-                    .send()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("Segment fetch failed: {}", e)))?
-                    .bytes()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("Segment read failed: {}", e)))?;
+                let fetch_res = fetch_bytes_with_retry(&client, &seg.url, &token, retries).await;
+                let bytes = match fetch_res {
+                    Ok(b) => b,
+                    Err(e) => {
+                        if skip_unavailable {
+                            eprintln!(
+                                "[download] Skipping unavailable HLS fragment #{} ({}): {}",
+                                seg.index, seg.url, e
+                            );
+                            return Ok(SequencedChunk {
+                                index: seg.index,
+                                data: Bytes::new(),
+                            });
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                };
 
                 let data = if let Some(ref key_info) = seg.key {
                     if key_info.method == "AES-128" {
@@ -617,18 +657,15 @@ impl HlsDownloader {
                             if let Some(k) = cached {
                                 k
                             } else {
-                                let fetched = client
-                                    .get(&key_info.uri)
-                                    .send()
-                                    .await
-                                    .map_err(|e| {
-                                        EngineError::Network(format!("HLS key fetch failed: {}", e))
-                                    })?
-                                    .bytes()
-                                    .await
-                                    .map_err(|e| {
-                                        EngineError::Network(format!("HLS key read failed: {}", e))
-                                    })?;
+                                let fetched =
+                                    fetch_bytes_with_retry(&client, &key_info.uri, &token, retries)
+                                        .await
+                                        .map_err(|e| {
+                                            EngineError::Network(format!(
+                                                "HLS key fetch failed: {}",
+                                                e
+                                            ))
+                                        })?;
                                 cache
                                     .write()
                                     .await

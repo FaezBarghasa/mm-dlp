@@ -21,6 +21,8 @@ pub struct EngineConfig {
     pub dns_servers: Option<String>,
     pub dangerously_insecure: bool,
     pub custom_headers: Option<Vec<String>>,
+    pub fragment_retries: u32,
+    pub skip_unavailable_fragments: bool,
 }
 
 impl EngineConfig {
@@ -99,6 +101,8 @@ impl Default for EngineConfig {
             dns_servers: None,
             dangerously_insecure: false,
             custom_headers: None,
+            fragment_retries: 10,
+            skip_unavailable_fragments: true,
         }
     }
 }

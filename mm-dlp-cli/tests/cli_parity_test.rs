@@ -74,3 +74,34 @@ fn test_cli_phase1_aliases() {
     assert!(cli.skip_download);
     assert!(cli.no_check_certificates);
 }
+
+#[test]
+fn test_cli_phase2_fragment_resilience_flags() {
+    let args = vec![
+        "mm-dlp",
+        "--fragment-retries",
+        "15",
+        "--skip-unavailable-fragments",
+        "https://example.com/stream.m3u8",
+    ];
+
+    let cli = Cli::try_parse_from(args).expect("Failed to parse fragment resilience flags");
+    assert_eq!(cli.fragment_retries, "15");
+    assert!(cli.skip_unavailable_fragments);
+    assert!(!cli.no_skip_unavailable_fragments);
+}
+
+#[test]
+fn test_cli_phase2_fragment_resilience_aliases() {
+    let args = vec![
+        "mm-dlp",
+        "--fragment-retries",
+        "infinite",
+        "--abort-on-unavailable-fragments",
+        "https://example.com/stream.m3u8",
+    ];
+
+    let cli = Cli::try_parse_from(args).expect("Failed to parse fragment resilience aliases");
+    assert_eq!(cli.fragment_retries, "infinite");
+    assert!(cli.no_skip_unavailable_fragments);
+}

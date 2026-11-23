@@ -606,3 +606,37 @@ async fn test_phase1_processor_audio_formats() {
     let _ = extract_audio_from_file(p_in, p_out, "flac", "best", false).await;
     let _ = extract_audio_from_file(p_in, p_out, "wav", "best", false).await;
 }
+
+#[tokio::test]
+async fn test_phase2_fragment_resilience_and_downloaders() {
+    use mm_dlp_core::config::EngineConfig;
+    use mm_dlp_core::downloader::dash::DashDownloader;
+    use mm_dlp_core::downloader::fetch_bytes_with_retry;
+    use mm_dlp_core::downloader::hls::HlsDownloader;
+    use tokio_util::sync::CancellationToken;
+
+    // Verify EngineConfig defaults for Phase 2
+    let config = EngineConfig::default();
+    assert_eq!(config.fragment_retries, 10);
+    assert!(config.skip_unavailable_fragments);
+
+    let client = reqwest::Client::new();
+    let cancel = CancellationToken::new();
+
+    // Verify fetch_bytes_with_retry fails fast when cancelled
+    cancel.cancel();
+    let err = fetch_bytes_with_retry(&client, "http://127.0.0.1:9999/dummy", &cancel, 2).await;
+    assert!(err.is_err());
+
+    // Verify HlsDownloader and DashDownloader builders
+    let hls = HlsDownloader::new(client.clone(), 4)
+        .with_retries(5)
+        .with_skip_unavailable(false);
+    drop(hls);
+
+    let dash = DashDownloader::new(client, 4)
+        .with_retries(3)
+        .with_skip_unavailable(true);
+    drop(dash);
+}
+

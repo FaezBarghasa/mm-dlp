@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use reqwest::Client;
 use std::collections::HashSet;
 use std::path::Path;
@@ -9,6 +10,7 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use super::fetch_bytes_with_retry;
 use super::flusher::SequentialFlusher;
 use super::parallel::SequencedChunk;
 use crate::error::EngineError;
@@ -30,6 +32,8 @@ pub struct DashManifest {
 pub struct DashDownloader {
     client: Client,
     concurrency: usize,
+    retries: usize,
+    skip_unavailable_fragments: bool,
 }
 
 impl DashDownloader {
@@ -37,7 +41,19 @@ impl DashDownloader {
         Self {
             client,
             concurrency: concurrency.max(1),
+            retries: 10,
+            skip_unavailable_fragments: true,
         }
+    }
+
+    pub fn with_retries(mut self, retries: usize) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    pub fn with_skip_unavailable(mut self, skip: bool) -> Self {
+        self.skip_unavailable_fragments = skip;
+        self
     }
 
     /// Parses an MPD XML manifest content and extracts media segments.
@@ -233,15 +249,12 @@ impl DashDownloader {
 
         // Fetch initialization segment if available
         if let Some(ref init_url) = manifest.init_url {
-            let init_bytes = self
-                .client
-                .get(init_url)
-                .send()
-                .await
-                .map_err(|e| EngineError::Network(format!("Failed to fetch init segment: {}", e)))?
-                .bytes()
-                .await
-                .map_err(|e| EngineError::Network(format!("Failed to read init bytes: {}", e)))?;
+            let init_bytes =
+                fetch_bytes_with_retry(&self.client, init_url, &cancel_token, self.retries)
+                    .await
+                    .map_err(|e| {
+                        EngineError::Network(format!("Failed to fetch init segment: {}", e))
+                    })?;
             total_bytes += init_bytes.len() as u64;
 
             if is_stdout {
@@ -293,6 +306,8 @@ impl DashDownloader {
 
         let semaphore = Arc::new(Semaphore::new(effective_concurrency));
         let mut join_set = JoinSet::new();
+        let retries = self.retries;
+        let skip_unavailable = self.skip_unavailable_fragments;
 
         for seg in manifest.media_segments {
             let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
@@ -307,20 +322,25 @@ impl DashDownloader {
                     return Err(EngineError::Cancelled);
                 }
 
-                let bytes = client
-                    .get(&seg.url)
-                    .send()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("DASH segment fetch failed: {}", e)))?
-                    .bytes()
-                    .await
-                    .map_err(|e| {
-                        EngineError::Network(format!("DASH segment read failed: {}", e))
-                    })?;
+                let fetch_res = fetch_bytes_with_retry(&client, &seg.url, &token, retries).await;
+                let data = match fetch_res {
+                    Ok(b) => b,
+                    Err(e) => {
+                        if skip_unavailable {
+                            eprintln!(
+                                "[download] Skipping unavailable DASH fragment #{} ({}): {}",
+                                seg.index, seg.url, e
+                            );
+                            Bytes::new()
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                };
 
                 Ok(SequencedChunk {
                     index: seg.index,
-                    data: bytes,
+                    data,
                 })
             });
         }
@@ -408,6 +428,8 @@ impl DashDownloader {
         );
         let mut refresh_interval = tokio::time::interval(poll_interval);
         refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let retries = self.retries;
+        let skip_unavailable = self.skip_unavailable_fragments;
 
         loop {
             if cancel_token.is_cancelled() {
@@ -439,28 +461,26 @@ impl DashDownloader {
                             return Err(EngineError::Cancelled);
                         }
 
-                        let bytes = client
-                            .get(&seg_url)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                EngineError::Network(format!(
-                                    "Dynamic DASH segment fetch failed: {}",
-                                    e
-                                ))
-                            })?
-                            .bytes()
-                            .await
-                            .map_err(|e| {
-                                EngineError::Network(format!(
-                                    "Dynamic DASH segment read failed: {}",
-                                    e
-                                ))
-                            })?;
+                        let fetch_res =
+                            fetch_bytes_with_retry(&client, &seg_url, &token, retries).await;
+                        let data = match fetch_res {
+                            Ok(b) => b,
+                            Err(e) => {
+                                if skip_unavailable {
+                                    eprintln!(
+                                        "[download] Skipping unavailable dynamic DASH fragment #{} ({}): {}",
+                                        assigned_index, seg_url, e
+                                    );
+                                    Bytes::new()
+                                } else {
+                                    return Err(e);
+                                }
+                            }
+                        };
 
                         Ok(SequencedChunk {
                             index: assigned_index,
-                            data: bytes,
+                            data,
                         })
                     });
                 }
@@ -535,15 +555,10 @@ impl DashDownloader {
 
         // If initialization segment present, send it as index 0
         if let Some(ref init_url) = manifest.init_url {
-            let init_bytes = self
-                .client
-                .get(init_url)
-                .send()
-                .await
-                .map_err(|e| EngineError::Network(format!("Init fetch failed: {}", e)))?
-                .bytes()
-                .await
-                .map_err(|e| EngineError::Network(format!("Init read failed: {}", e)))?;
+            let init_bytes =
+                fetch_bytes_with_retry(&self.client, init_url, &cancel_token, self.retries)
+                    .await
+                    .map_err(|e| EngineError::Network(format!("Init fetch failed: {}", e)))?;
             if tx
                 .send(Ok(SequencedChunk {
                     index: next_idx,
@@ -559,6 +574,8 @@ impl DashDownloader {
 
         let semaphore = Arc::new(Semaphore::new(self.concurrency));
         let mut join_set = JoinSet::new();
+        let retries = self.retries;
+        let skip_unavailable = self.skip_unavailable_fragments;
 
         for seg in manifest.media_segments {
             let permit =
@@ -575,18 +592,25 @@ impl DashDownloader {
                     return Err(EngineError::Cancelled);
                 }
 
-                let bytes = client
-                    .get(&seg.url)
-                    .send()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("Segment fetch failed: {}", e)))?
-                    .bytes()
-                    .await
-                    .map_err(|e| EngineError::Network(format!("Segment read failed: {}", e)))?;
+                let fetch_res = fetch_bytes_with_retry(&client, &seg.url, &token, retries).await;
+                let data = match fetch_res {
+                    Ok(b) => b,
+                    Err(e) => {
+                        if skip_unavailable {
+                            eprintln!(
+                                "[download] Skipping unavailable DASH fragment #{} ({}): {}",
+                                mapped_index, seg.url, e
+                            );
+                            Bytes::new()
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                };
 
                 Ok(SequencedChunk {
                     index: mapped_index,
-                    data: bytes,
+                    data,
                 })
             });
         }

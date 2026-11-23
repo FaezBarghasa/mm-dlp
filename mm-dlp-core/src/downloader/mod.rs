@@ -184,20 +184,97 @@ pub fn build_http_client_with_config(
 }
 
 pub async fn fetch_with_fallback(client: &Client, url: &str) -> Result<Response, EngineError> {
-    let quic_future = client.get(url).header("Alt-Svc", "h3=\":443\"").send();
+    let mut attempts = 0;
+    loop {
+        let quic_future = client.get(url).header("Alt-Svc", "h3=\":443\"").send();
 
-    match tokio::time::timeout(Duration::from_secs(10), quic_future).await {
-        Ok(Ok(resp)) if resp.status().is_success() => Ok(resp),
-        _ => {
-            let standard_resp = client.get(url).send().await?;
-            if standard_resp.status().is_success() {
-                Ok(standard_resp)
-            } else {
-                Err(EngineError::Network(format!(
-                    "HTTP download failed with status code: {}",
-                    standard_resp.status()
-                )))
+        match tokio::time::timeout(Duration::from_secs(10), quic_future).await {
+            Ok(Ok(resp)) if resp.status().is_success() => return Ok(resp),
+            _ => {
+                let standard_resp = client.get(url).send().await;
+                match standard_resp {
+                    Ok(resp) if resp.status().is_success() => return Ok(resp),
+                    Ok(resp) => {
+                        let status = resp.status();
+                        attempts += 1;
+                        if attempts >= 3
+                            || status == reqwest::StatusCode::NOT_FOUND
+                            || status == reqwest::StatusCode::GONE
+                        {
+                            return Err(EngineError::Network(format!(
+                                "HTTP download failed with status code: {}",
+                                status
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        attempts += 1;
+                        if attempts >= 3 {
+                            return Err(EngineError::Network(format!(
+                                "Network request failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
             }
+        }
+        tokio::time::sleep(Duration::from_millis(150 * (1 << attempts.min(3)))).await;
+    }
+}
+
+/// Fetch bytes with exponential backoff and jitter retry loop for fragment downloads.
+pub async fn fetch_bytes_with_retry(
+    client: &Client,
+    url: &str,
+    cancel_token: &CancellationToken,
+    retries: usize,
+) -> Result<bytes::Bytes, EngineError> {
+    let mut attempt = 0;
+    loop {
+        if cancel_token.is_cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+        match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(b) => return Ok(b),
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > retries {
+                        return Err(EngineError::Network(format!(
+                            "Fragment read failed after {} attempts: {}",
+                            attempt, e
+                        )));
+                    }
+                }
+            },
+            Ok(resp) => {
+                let status = resp.status();
+                attempt += 1;
+                if attempt > retries
+                    || status == reqwest::StatusCode::NOT_FOUND
+                    || status == reqwest::StatusCode::GONE
+                {
+                    return Err(EngineError::Network(format!(
+                        "Fragment HTTP {} after {} attempts: {}",
+                        status, attempt, url
+                    )));
+                }
+            }
+            Err(e) => {
+                attempt += 1;
+                if attempt > retries {
+                    return Err(EngineError::Network(format!(
+                        "Fragment network error after {} attempts: {}",
+                        attempt, e
+                    )));
+                }
+            }
+        }
+        let backoff_ms = (100u64 * (1u64 << attempt.min(5))).min(3000);
+        tokio::select! {
+            _ = cancel_token.cancelled() => return Err(EngineError::Cancelled),
+            _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {}
         }
     }
 }

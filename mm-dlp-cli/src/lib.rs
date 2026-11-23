@@ -300,6 +300,27 @@ pub struct Cli {
         action = clap::ArgAction::Append
     )]
     pub add_header: Vec<String>,
+
+    /// Number of retries for a fragment (default is 10), or "infinite"
+    #[arg(long = "fragment-retries", default_value = "10")]
+    pub fragment_retries: String,
+
+    /// Skip unavailable fragments for DASH, HLS and ISM (default)
+    #[arg(
+        long = "skip-unavailable-fragments",
+        alias = "no-abort-on-unavailable-fragments",
+        default_value_t = true,
+        action = clap::ArgAction::SetTrue
+    )]
+    pub skip_unavailable_fragments: bool,
+
+    /// Abort download if a fragment is unavailable
+    #[arg(
+        long = "no-skip-unavailable-fragments",
+        alias = "abort-on-unavailable-fragments",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub no_skip_unavailable_fragments: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -362,6 +383,18 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     if !cli.add_header.is_empty() {
         config.custom_headers = Some(cli.add_header.clone());
     }
+
+    let fragment_retries = match cli.fragment_retries.to_lowercase().as_str() {
+        "infinite" | "inf" | "-1" => usize::MAX,
+        val => val.parse::<usize>().unwrap_or(10),
+    };
+    let skip_unavailable_fragments = if cli.no_skip_unavailable_fragments {
+        false
+    } else {
+        cli.skip_unavailable_fragments
+    };
+    config.fragment_retries = fragment_retries.min(u32::MAX as usize) as u32;
+    config.skip_unavailable_fragments = skip_unavailable_fragments;
 
     if cli.verbose {
         if let Some(ref b) = cli.cookies_from_browser {
@@ -690,6 +723,8 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             embed_metadata: cli.embed_metadata && !is_stdout,
             loudness_norm: cli.loudness_norm,
             buffer_size_bytes: Some(buffer_size_bytes),
+            fragment_retries,
+            skip_unavailable_fragments,
         };
 
         let callback: Arc<dyn DownloadProgressCallback> =
@@ -833,6 +868,8 @@ async fn handle_legacy_download(
         embed_metadata: true,
         loudness_norm: false,
         buffer_size_bytes: None,
+        fragment_retries: 10,
+        skip_unavailable_fragments: true,
     };
 
     let callback: Arc<dyn DownloadProgressCallback> =

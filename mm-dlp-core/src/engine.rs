@@ -40,6 +40,8 @@ pub struct MediaDownloadOptions {
     pub embed_metadata: bool,
     pub loudness_norm: bool,
     pub buffer_size_bytes: Option<usize>,
+    pub fragment_retries: usize,
+    pub skip_unavailable_fragments: bool,
 }
 
 impl Default for MediaDownloadOptions {
@@ -57,6 +59,8 @@ impl Default for MediaDownloadOptions {
             embed_metadata: true,
             loudness_norm: false,
             buffer_size_bytes: None,
+            fragment_retries: 10,
+            skip_unavailable_fragments: true,
         }
     }
 }
@@ -401,11 +405,13 @@ impl MmDlpEngine {
                         let tmp_audio =
                             output_dir_path.join(format!("{}.tmp.raw.a.{}", info.id, audio.ext));
                         let a_bytes = self
-                            .download_format_stream(
+                            .download_format_stream_with_opts(
                                 audio,
                                 &tmp_audio,
                                 options.concurrent_fragments,
                                 cancel_token.clone(),
+                                options.fragment_retries,
+                                options.skip_unavailable_fragments,
                             )
                             .await?;
                         total_bytes += a_bytes;
@@ -435,17 +441,21 @@ impl MmDlpEngine {
                         let (a_tx, a_rx) =
                             tokio::sync::mpsc::channel(options.concurrent_fragments.max(4));
 
-                        let v_fut = self.stream_format_to_channel(
+                        let v_fut = self.stream_format_to_channel_with_opts(
                             video,
                             v_tx,
                             options.concurrent_fragments,
                             cancel_token.clone(),
+                            options.fragment_retries,
+                            options.skip_unavailable_fragments,
                         );
-                        let a_fut = self.stream_format_to_channel(
+                        let a_fut = self.stream_format_to_channel_with_opts(
                             audio,
                             a_tx,
                             options.concurrent_fragments,
                             cancel_token.clone(),
+                            options.fragment_retries,
+                            options.skip_unavailable_fragments,
                         );
                         let buffer_bytes = options.buffer_size_bytes.unwrap_or_else(
                             crate::downloader::flusher::default_streaming_buffer_size,
@@ -482,21 +492,25 @@ impl MmDlpEngine {
                                     .join(format!("{}.tmp.a.{}", info.id, audio.ext));
 
                                 let v_bytes = self
-                                    .download_format_stream(
+                                    .download_format_stream_with_opts(
                                         video,
                                         &tmp_video,
                                         options.concurrent_fragments,
                                         cancel_token.clone(),
+                                        options.fragment_retries,
+                                        options.skip_unavailable_fragments,
                                     )
                                     .await?;
                                 total_bytes += v_bytes;
 
                                 let a_bytes = self
-                                    .download_format_stream(
+                                    .download_format_stream_with_opts(
                                         audio,
                                         &tmp_audio,
                                         options.concurrent_fragments,
                                         cancel_token.clone(),
+                                        options.fragment_retries,
+                                        options.skip_unavailable_fragments,
                                     )
                                     .await?;
                                 total_bytes += a_bytes;
@@ -526,11 +540,13 @@ impl MmDlpEngine {
                         let tmp_video =
                             output_dir_path.join(format!("{}.tmp.raw.{}", info.id, format.ext));
                         let bytes = self
-                            .download_format_stream(
+                            .download_format_stream_with_opts(
                                 format,
                                 &tmp_video,
                                 options.concurrent_fragments,
                                 cancel_token.clone(),
+                                options.fragment_retries,
+                                options.skip_unavailable_fragments,
                             )
                             .await?;
                         total_bytes += bytes;
@@ -554,11 +570,13 @@ impl MmDlpEngine {
                         let _ = tokio::fs::remove_file(&tmp_video).await;
                     } else {
                         let bytes = self
-                            .download_format_stream(
+                            .download_format_stream_with_opts(
                                 format,
                                 &final_target_path,
                                 options.concurrent_fragments,
                                 cancel_token.clone(),
+                                options.fragment_retries,
+                                options.skip_unavailable_fragments,
                             )
                             .await?;
                         total_bytes += bytes;
@@ -629,13 +647,37 @@ impl MmDlpEngine {
         concurrency: usize,
         cancel_token: CancellationToken,
     ) -> Result<(), EngineError> {
+        self.stream_format_to_channel_with_opts(
+            format,
+            tx,
+            concurrency,
+            cancel_token,
+            self.config.fragment_retries as usize,
+            self.config.skip_unavailable_fragments,
+        )
+        .await
+    }
+
+    pub async fn stream_format_to_channel_with_opts(
+        &self,
+        format: &MediaFormat,
+        tx: tokio::sync::mpsc::Sender<Result<SequencedChunk, EngineError>>,
+        concurrency: usize,
+        cancel_token: CancellationToken,
+        retries: usize,
+        skip_unavailable: bool,
+    ) -> Result<(), EngineError> {
         if format.protocol.as_deref() == Some("m3u8_native") || format.url.contains(".m3u8") {
-            let hls = HlsDownloader::new(self.client.clone(), concurrency);
+            let hls = HlsDownloader::new(self.client.clone(), concurrency)
+                .with_retries(retries)
+                .with_skip_unavailable(skip_unavailable);
             hls.stream_to_channel(&format.url, tx, cancel_token).await
         } else if format.protocol.as_deref() == Some("http_dash_segments")
             || format.url.contains(".mpd")
         {
-            let dash = DashDownloader::new(self.client.clone(), concurrency);
+            let dash = DashDownloader::new(self.client.clone(), concurrency)
+                .with_retries(retries)
+                .with_skip_unavailable(skip_unavailable);
             dash.stream_to_channel(&format.url, tx, cancel_token).await
         } else {
             let mut resp = fetch_with_fallback(&self.client, &format.url).await?;
@@ -664,21 +706,45 @@ impl MmDlpEngine {
         }
     }
 
-    async fn download_format_stream(
+    pub async fn download_format_stream(
         &self,
         format: &MediaFormat,
         dest: &Path,
         concurrency: usize,
         cancel_token: CancellationToken,
     ) -> Result<u64, EngineError> {
+        self.download_format_stream_with_opts(
+            format,
+            dest,
+            concurrency,
+            cancel_token,
+            self.config.fragment_retries as usize,
+            self.config.skip_unavailable_fragments,
+        )
+        .await
+    }
+
+    async fn download_format_stream_with_opts(
+        &self,
+        format: &MediaFormat,
+        dest: &Path,
+        concurrency: usize,
+        cancel_token: CancellationToken,
+        retries: usize,
+        skip_unavailable: bool,
+    ) -> Result<u64, EngineError> {
         if format.protocol.as_deref() == Some("m3u8_native") || format.url.contains(".m3u8") {
-            let hls = HlsDownloader::new(self.client.clone(), concurrency);
+            let hls = HlsDownloader::new(self.client.clone(), concurrency)
+                .with_retries(retries)
+                .with_skip_unavailable(skip_unavailable);
             hls.download_to_file(&format.url, dest, cancel_token, None)
                 .await
         } else if format.protocol.as_deref() == Some("http_dash_segments")
             || format.url.contains(".mpd")
         {
-            let dash = DashDownloader::new(self.client.clone(), concurrency);
+            let dash = DashDownloader::new(self.client.clone(), concurrency)
+                .with_retries(retries)
+                .with_skip_unavailable(skip_unavailable);
             dash.download_to_file(&format.url, dest, cancel_token, None)
                 .await
         } else {
