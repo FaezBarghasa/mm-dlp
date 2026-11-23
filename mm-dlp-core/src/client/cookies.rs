@@ -552,6 +552,257 @@ impl FirefoxCookieExtractor {
     }
 }
 
+pub struct SafariCookieExtractor;
+
+impl SafariCookieExtractor {
+    pub fn candidate_cookie_paths() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Ok(home) = std::env::var("HOME") {
+            let home = PathBuf::from(home);
+            // macOS standard path
+            paths.push(home.join("Library/Cookies/Cookies.binarycookies"));
+            // macOS sandboxed Safari container path
+            paths.push(home.join(
+                "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
+            ));
+        }
+        // iOS paths (standard container or jailbroken root)
+        paths.push(PathBuf::from(
+            "/private/var/mobile/Library/Cookies/Cookies.binarycookies",
+        ));
+        paths.push(PathBuf::from(
+            "/var/mobile/Library/Cookies/Cookies.binarycookies",
+        ));
+        paths
+    }
+
+    pub fn resolve_cookie_path(spec: Option<&str>) -> Result<PathBuf, EngineError> {
+        if let Some(s) = spec {
+            let p = PathBuf::from(s);
+            if p.is_file() {
+                return Ok(p);
+            }
+            if p.is_dir() {
+                let candidate = p.join("Cookies.binarycookies");
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
+                let candidate_lc = p.join("cookies.binarycookies");
+                if candidate_lc.exists() {
+                    return Ok(candidate_lc);
+                }
+            }
+        }
+
+        for path in Self::candidate_cookie_paths() {
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        Err(EngineError::FileSystemError(
+            "No Safari Cookies.binarycookies found. Ensure Safari has cookies saved or pass direct path via --cookies-from-browser safari:/path/to/Cookies.binarycookies.".to_string(),
+        ))
+    }
+
+    /// Parses Apple Safari / WebKit proprietary Cookies.binarycookies binary data format.
+    ///
+    /// Layout:
+    /// - 4 bytes: magic `cook`
+    /// - 4 bytes: number of pages (big-endian u32)
+    /// - num_pages * 4 bytes: page sizes (big-endian u32)
+    /// - Pages sequentially:
+    ///   - 4 bytes: page header tag (0x00000100)
+    ///   - 4 bytes: number of cookies (little-endian u32)
+    ///   - num_cookies * 4 bytes: cookie offsets relative to start of page (little-endian u32)
+    ///   - 4 bytes: page end tag (0x00000000)
+    ///   - Cookie records at each offset:
+    ///     - 0..4: size (u32 LE)
+    ///     - 4..8: unknown1 (u32 LE)
+    ///     - 8..12: flags (u32 LE, bit 0 = secure, bit 2 = http_only)
+    ///     - 12..16: unknown2 (u32 LE)
+    ///     - 16..20: domain/url offset (u32 LE)
+    ///     - 20..24: name offset (u32 LE)
+    ///     - 24..28: path offset (u32 LE)
+    ///     - 28..32: value offset (u32 LE)
+    ///     - 32..40: comment offset / padding
+    ///     - 40..48: expiry timestamp (f64 LE, Mac epoch offset: +978307200 seconds)
+    ///     - 48..56: creation timestamp (f64 LE)
+    ///     - Null-terminated UTF-8 strings at respective offsets
+    pub fn parse_binarycookies(data: &[u8]) -> Result<Vec<CookieItem>, EngineError> {
+        if data.len() < 8 {
+            return Err(EngineError::FileSystemError(
+                "Binarycookies file is too short (< 8 bytes)".to_string(),
+            ));
+        }
+        if &data[0..4] != b"cook" {
+            return Err(EngineError::FileSystemError(
+                "Invalid binarycookies magic header (expected 'cook')".to_string(),
+            ));
+        }
+
+        let num_pages = u32::from_be_bytes(
+            data[4..8]
+                .try_into()
+                .map_err(|_| EngineError::FileSystemError("Corrupted page count".to_string()))?,
+        ) as usize;
+
+        let header_size = 8 + num_pages * 4;
+        if data.len() < header_size {
+            return Err(EngineError::FileSystemError(
+                "Binarycookies truncated header page sizes table".to_string(),
+            ));
+        }
+
+        let mut page_sizes = Vec::with_capacity(num_pages);
+        for i in 0..num_pages {
+            let offset = 8 + i * 4;
+            let p_size = u32::from_be_bytes(
+                data[offset..offset + 4]
+                    .try_into()
+                    .map_err(|_| EngineError::FileSystemError("Corrupted page size".to_string()))?,
+            ) as usize;
+            page_sizes.push(p_size);
+        }
+
+        let mut current_offset = header_size;
+        let mut all_cookies = Vec::new();
+
+        for page_size in page_sizes {
+            if current_offset + page_size > data.len() {
+                return Err(EngineError::FileSystemError(
+                    "Binarycookies page size exceeds data length".to_string(),
+                ));
+            }
+            let page_data = &data[current_offset..current_offset + page_size];
+            current_offset += page_size;
+
+            if page_data.len() < 8 {
+                continue;
+            }
+
+            // Page tag: 0x00000100 (in BE: [0x00, 0x00, 0x01, 0x00], or in LE: [0x00, 0x01, 0x00, 0x00])
+            if page_data[0..4] != [0x00, 0x00, 0x01, 0x00]
+                && page_data[0..4] != [0x00, 0x01, 0x00, 0x00]
+            {
+                continue;
+            }
+
+            let num_cookies =
+                u32::from_le_bytes(page_data[4..8].try_into().map_err(|_| {
+                    EngineError::FileSystemError("Corrupted cookie count".to_string())
+                })?) as usize;
+
+            if page_data.len() < 8 + num_cookies * 4 {
+                continue;
+            }
+
+            let mut cookie_offsets = Vec::with_capacity(num_cookies);
+            for i in 0..num_cookies {
+                let off = 8 + i * 4;
+                let c_offset =
+                    u32::from_le_bytes(page_data[off..off + 4].try_into().map_err(|_| {
+                        EngineError::FileSystemError("Corrupted cookie offset".to_string())
+                    })?) as usize;
+                cookie_offsets.push(c_offset);
+            }
+
+            for c_offset in cookie_offsets {
+                if c_offset + 48 > page_data.len() {
+                    continue;
+                }
+                let cookie_record = &page_data[c_offset..];
+                let cookie_size =
+                    u32::from_le_bytes(cookie_record[0..4].try_into().map_err(|_| {
+                        EngineError::FileSystemError("Corrupted cookie size".to_string())
+                    })?) as usize;
+
+                if cookie_size < 48 || cookie_record.len() < cookie_size {
+                    continue;
+                }
+
+                let flags = u32::from_le_bytes(cookie_record[8..12].try_into().unwrap_or([0; 4]));
+                let secure = (flags & 1) != 0;
+                let http_only = (flags & 4) != 0;
+
+                let url_offset =
+                    u32::from_le_bytes(cookie_record[16..20].try_into().unwrap_or([0; 4])) as usize;
+                let name_offset =
+                    u32::from_le_bytes(cookie_record[20..24].try_into().unwrap_or([0; 4])) as usize;
+                let path_offset =
+                    u32::from_le_bytes(cookie_record[24..28].try_into().unwrap_or([0; 4])) as usize;
+                let value_offset =
+                    u32::from_le_bytes(cookie_record[28..32].try_into().unwrap_or([0; 4])) as usize;
+
+                let mac_expiry =
+                    f64::from_le_bytes(cookie_record[40..48].try_into().unwrap_or([0; 8]));
+                let unix_expiry = if mac_expiry > 0.0 {
+                    (mac_expiry + 978_307_200.0) as i64
+                } else {
+                    0
+                };
+
+                let read_cstring = |offset: usize| -> Option<String> {
+                    if offset >= cookie_size {
+                        return None;
+                    }
+                    let slice = &cookie_record[offset..cookie_size];
+                    let end = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+                    std::str::from_utf8(&slice[..end])
+                        .ok()
+                        .map(|s| s.to_string())
+                };
+
+                let domain = read_cstring(url_offset).unwrap_or_default();
+                let name = read_cstring(name_offset).unwrap_or_default();
+                let path = read_cstring(path_offset).unwrap_or_else(|| "/".to_string());
+                let value = read_cstring(value_offset).unwrap_or_default();
+
+                if !name.is_empty() && !domain.is_empty() {
+                    let include_subdomains = domain.starts_with('.');
+                    all_cookies.push(CookieItem {
+                        include_subdomains,
+                        domain,
+                        path,
+                        secure,
+                        expires: unix_expiry,
+                        name,
+                        value,
+                        http_only,
+                    });
+                }
+            }
+        }
+
+        Ok(all_cookies)
+    }
+
+    pub fn extract_from_file(path: &Path) -> Result<Vec<CookieItem>, EngineError> {
+        let data = std::fs::read(path).map_err(|e| {
+            EngineError::FileSystemError(format!(
+                "Failed to read Safari binarycookies file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        Self::parse_binarycookies(&data)
+    }
+
+    pub fn extract_to_netscape(spec: Option<&str>) -> Result<String, EngineError> {
+        let path = Self::resolve_cookie_path(spec)?;
+        let items = Self::extract_from_file(&path)?;
+
+        let mut out = String::from(
+            "# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n# Extracted by mm-dlp (Safari/WebKit/CFNetwork)\n\n",
+        );
+        for item in &items {
+            out.push_str(&item.to_netscape_line());
+            out.push('\n');
+        }
+        Ok(out)
+    }
+}
+
 pub struct BrowserCookieExtractor;
 
 impl BrowserCookieExtractor {
@@ -565,12 +816,13 @@ impl BrowserCookieExtractor {
             "firefox" | "gecko" | "librewolf" | "waterfox" | "torbrowser" => {
                 FirefoxCookieExtractor::extract_to_netscape(profile)
             }
+            "safari" | "apple" | "webkit" => SafariCookieExtractor::extract_to_netscape(profile),
             "chrome" | "chromium" | "brave" | "edge" => Err(EngineError::FileSystemError(format!(
                 "Direct cookie extraction for '{}' requires browser profile path.",
                 browser
             ))),
             other => Err(EngineError::FileSystemError(format!(
-                "Unsupported browser '{}' for cookie extraction. Supported: firefox (gecko), librewolf, waterfox, chrome, chromium, brave, edge",
+                "Unsupported browser '{}' for cookie extraction. Supported: firefox (gecko), safari (webkit/apple), librewolf, waterfox, chrome, chromium, brave, edge",
                 other
             ))),
         }
@@ -682,5 +934,75 @@ Default=1
         assert!(netscape.contains(".youtube.com\tTRUE\t/\tTRUE\t1800000000\tPREF\tf1=50000000"));
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_safari_binarycookies_parsing() {
+        let domain = ".apple.com\0";
+        let name = "my_token\0";
+        let path = "/account\0";
+        let value = "secret_safari_val\0";
+
+        // Cookie record header = 56 bytes (including 8 bytes creation date)
+        let url_offset = 56u32;
+        let name_offset = url_offset + domain.len() as u32;
+        let path_offset = name_offset + name.len() as u32;
+        let value_offset = path_offset + path.len() as u32;
+        let cookie_size = value_offset + value.len() as u32;
+
+        let mut cookie_record = Vec::new();
+        cookie_record.extend_from_slice(&cookie_size.to_le_bytes()); // 0..4 size
+        cookie_record.extend_from_slice(&[0u8; 4]); // 4..8 unknown1
+        cookie_record.extend_from_slice(&5u32.to_le_bytes()); // 8..12 flags (1 = secure, 4 = http_only)
+        cookie_record.extend_from_slice(&[0u8; 4]); // 12..16 unknown2
+        cookie_record.extend_from_slice(&url_offset.to_le_bytes()); // 16..20 url_offset
+        cookie_record.extend_from_slice(&name_offset.to_le_bytes()); // 20..24 name_offset
+        cookie_record.extend_from_slice(&path_offset.to_le_bytes()); // 24..28 path_offset
+        cookie_record.extend_from_slice(&value_offset.to_le_bytes()); // 28..32 value_offset
+        cookie_record.extend_from_slice(&[0u8; 8]); // 32..40 comment/reserved
+        // mac_expiry = 821692800.0 (which + 978307200 = 1800000000)
+        let mac_expiry: f64 = 821_692_800.0;
+        cookie_record.extend_from_slice(&mac_expiry.to_le_bytes()); // 40..48 expiry
+        let mac_creation: f64 = 800_000_000.0;
+        cookie_record.extend_from_slice(&mac_creation.to_le_bytes()); // 48..56 creation
+        cookie_record.extend_from_slice(domain.as_bytes());
+        cookie_record.extend_from_slice(name.as_bytes());
+        cookie_record.extend_from_slice(path.as_bytes());
+        cookie_record.extend_from_slice(value.as_bytes());
+
+        // Page header = 4 (tag) + 4 (num_cookies) + 4 (cookie_offset[0]) + 4 (page end tag) = 16 bytes
+        let cookie_offset_in_page = 16u32;
+        let page_size = cookie_offset_in_page + cookie_record.len() as u32;
+
+        let mut page = Vec::new();
+        page.extend_from_slice(&[0x00, 0x00, 0x01, 0x00]); // page tag
+        page.extend_from_slice(&1u32.to_le_bytes()); // 1 cookie
+        page.extend_from_slice(&cookie_offset_in_page.to_le_bytes()); // offset 0
+        page.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // page end
+        page.extend_from_slice(&cookie_record);
+
+        // File header = 4 (cook) + 4 (num_pages) + 4 (page_size[0]) = 12 bytes
+        let mut file_bytes = Vec::new();
+        file_bytes.extend_from_slice(b"cook");
+        file_bytes.extend_from_slice(&1u32.to_be_bytes()); // 1 page
+        file_bytes.extend_from_slice(&page_size.to_be_bytes()); // page size
+        file_bytes.extend_from_slice(&page);
+
+        let parsed = SafariCookieExtractor::parse_binarycookies(&file_bytes).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].domain, ".apple.com");
+        assert_eq!(parsed[0].name, "my_token");
+        assert_eq!(parsed[0].path, "/account");
+        assert_eq!(parsed[0].value, "secret_safari_val");
+        assert_eq!(parsed[0].expires, 1_800_000_000);
+        assert!(parsed[0].secure);
+        assert!(parsed[0].http_only);
+        assert!(parsed[0].include_subdomains);
+
+        let netscape = parsed[0].to_netscape_line();
+        assert_eq!(
+            netscape,
+            ".apple.com\tTRUE\t/account\tTRUE\t1800000000\tmy_token\tsecret_safari_val"
+        );
     }
 }

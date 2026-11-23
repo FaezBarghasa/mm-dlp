@@ -413,3 +413,131 @@ async fn test_custom_dns_configuration_and_fallback() {
     let client = build_http_client_with_config(&config).unwrap();
     drop(client);
 }
+
+#[test]
+fn test_safari_impersonation_user_agent_and_headers() {
+    use mm_dlp_core::client::h2::{BrowserProfile, H2Impersonator};
+    use mm_dlp_core::client::h3::H3Impersonator;
+    use mm_dlp_core::config::{EngineConfig, SAFARI_IOS_USER_AGENT, SAFARI_MACOS_USER_AGENT};
+    use mm_dlp_core::downloader::build_http_client_with_config;
+    use quiche::h3::NameValue;
+
+    // Test macOS Safari impersonation
+    let mut mac_config = EngineConfig::default();
+    mac_config.impersonate_target = Some("safari".to_string());
+    assert!(mac_config.is_safari_or_webkit());
+    assert!(!mac_config.is_ios_safari());
+
+    let client = build_http_client_with_config(&mac_config).unwrap();
+    drop(client);
+
+    // Test iOS Safari impersonation
+    let mut ios_config = EngineConfig::default();
+    ios_config.impersonate_target = Some("ios".to_string());
+    assert!(ios_config.is_safari_or_webkit());
+    assert!(ios_config.is_ios_safari());
+
+    let ios_client = build_http_client_with_config(&ios_config).unwrap();
+    drop(ios_client);
+
+    // Verify Safari / WebKit HTTP/2 pseudo-header order: :method, :scheme, :path, :authority
+    let safari_h2 = H2Impersonator::format_pseudo_headers_for(
+        BrowserProfile::Safari,
+        "GET",
+        "safari.apple.com",
+        "https",
+        "/media/stream.m3u8",
+    );
+    assert_eq!(safari_h2[0].0, ":method");
+    assert_eq!(safari_h2[1].0, ":scheme");
+    assert_eq!(safari_h2[2].0, ":path");
+    assert_eq!(safari_h2[3].0, ":authority");
+
+    // Verify Safari / WebKit HTTP/3 request headers order: :method, :scheme, :path, :authority
+    let safari_h3 = H3Impersonator::format_request_headers_for(
+        BrowserProfile::Safari,
+        "GET",
+        "safari.apple.com",
+        "https",
+        "/media/stream.m3u8",
+        None,
+    );
+    assert_eq!(safari_h3[0].name(), b":method");
+    assert_eq!(safari_h3[1].name(), b":scheme");
+    assert_eq!(safari_h3[2].name(), b":path");
+    assert_eq!(safari_h3[3].name(), b":authority");
+
+    // Verify User-Agents
+    assert!(SAFARI_MACOS_USER_AGENT.contains("Macintosh"));
+    assert!(SAFARI_MACOS_USER_AGENT.contains("Version/18.3 Safari/"));
+    assert!(SAFARI_IOS_USER_AGENT.contains("iPhone"));
+    assert!(SAFARI_IOS_USER_AGENT.contains("Mobile/15E148 Safari/"));
+}
+
+#[test]
+fn test_safari_binarycookies_extraction_via_browser_extractor() {
+    use mm_dlp_core::client::cookies::BrowserCookieExtractor;
+
+    let temp_dir = std::env::temp_dir();
+    let file_path = temp_dir.join(format!(
+        "test_safari_cookies_{}.binarycookies",
+        std::process::id()
+    ));
+
+    let domain = ".safari-test.org\0";
+    let name = "APPLE_AUTH\0";
+    let path = "/\0";
+    let value = "safari_secure_token_12345\0";
+
+    let url_offset = 56u32;
+    let name_offset = url_offset + domain.len() as u32;
+    let path_offset = name_offset + name.len() as u32;
+    let value_offset = path_offset + path.len() as u32;
+    let cookie_size = value_offset + value.len() as u32;
+
+    let mut cookie_record = Vec::new();
+    cookie_record.extend_from_slice(&cookie_size.to_le_bytes());
+    cookie_record.extend_from_slice(&[0u8; 4]);
+    cookie_record.extend_from_slice(&5u32.to_le_bytes()); // secure & http_only
+    cookie_record.extend_from_slice(&[0u8; 4]);
+    cookie_record.extend_from_slice(&url_offset.to_le_bytes());
+    cookie_record.extend_from_slice(&name_offset.to_le_bytes());
+    cookie_record.extend_from_slice(&path_offset.to_le_bytes());
+    cookie_record.extend_from_slice(&value_offset.to_le_bytes());
+    cookie_record.extend_from_slice(&[0u8; 8]);
+    let mac_expiry: f64 = 821_692_800.0; // +978307200 = 1800000000
+    cookie_record.extend_from_slice(&mac_expiry.to_le_bytes());
+    let mac_creation: f64 = 800_000_000.0;
+    cookie_record.extend_from_slice(&mac_creation.to_le_bytes());
+    cookie_record.extend_from_slice(domain.as_bytes());
+    cookie_record.extend_from_slice(name.as_bytes());
+    cookie_record.extend_from_slice(path.as_bytes());
+    cookie_record.extend_from_slice(value.as_bytes());
+
+    let cookie_offset_in_page = 16u32;
+    let page_size = cookie_offset_in_page + cookie_record.len() as u32;
+
+    let mut page = Vec::new();
+    page.extend_from_slice(&[0x00, 0x00, 0x01, 0x00]);
+    page.extend_from_slice(&1u32.to_le_bytes());
+    page.extend_from_slice(&cookie_offset_in_page.to_le_bytes());
+    page.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    page.extend_from_slice(&cookie_record);
+
+    let mut file_bytes = Vec::new();
+    file_bytes.extend_from_slice(b"cook");
+    file_bytes.extend_from_slice(&1u32.to_be_bytes());
+    file_bytes.extend_from_slice(&page_size.to_be_bytes());
+    file_bytes.extend_from_slice(&page);
+
+    std::fs::write(&file_path, &file_bytes).expect("Failed to write mock binarycookies file");
+
+    let extracted =
+        BrowserCookieExtractor::extract(&format!("safari:{}", file_path.display())).unwrap();
+    assert!(extracted.contains("# Extracted by mm-dlp (Safari/WebKit/CFNetwork)"));
+    assert!(extracted.contains(
+        ".safari-test.org\tTRUE\t/\tTRUE\t1800000000\tAPPLE_AUTH\tsafari_secure_token_12345"
+    ));
+
+    let _ = std::fs::remove_file(&file_path);
+}

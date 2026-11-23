@@ -12,6 +12,9 @@ pub const CHROME_H3_INITIAL_MAX_STREAMS_BIDI: u64 = 100;
 pub const GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: u64 = 262_144;
 pub const GECKO_H3_INITIAL_MAX_DATA: u64 = 10_485_760;
 
+pub const SAFARI_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: u64 = 1_048_576;
+pub const SAFARI_H3_INITIAL_MAX_DATA: u64 = 10_485_760;
+
 pub struct H3Impersonator {
     quic_config: quiche::Config,
     h3_config: quiche::h3::Config,
@@ -56,6 +59,17 @@ impl H3Impersonator {
                     .set_initial_max_stream_data_uni(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
                 quic_config.grease(false);
             }
+            BrowserProfile::Safari => {
+                quic_config.set_initial_max_stream_data_bidi_local(
+                    SAFARI_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                );
+                quic_config.set_initial_max_stream_data_bidi_remote(
+                    SAFARI_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                );
+                quic_config
+                    .set_initial_max_stream_data_uni(SAFARI_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.grease(false);
+            }
         }
 
         quic_config.set_initial_max_streams_bidi(CHROME_H3_INITIAL_MAX_STREAMS_BIDI);
@@ -74,6 +88,10 @@ impl H3Impersonator {
 
     pub fn new_firefox() -> Result<Self, EngineError> {
         Self::for_browser(BrowserProfile::Firefox)
+    }
+
+    pub fn new_safari() -> Result<Self, EngineError> {
+        Self::for_browser(BrowserProfile::Safari)
     }
 
     pub fn profile(&self) -> BrowserProfile {
@@ -142,6 +160,12 @@ impl H3Impersonator {
                 quiche::h3::Header::new(b":path", path.as_bytes()),
                 quiche::h3::Header::new(b":authority", authority.as_bytes()),
                 quiche::h3::Header::new(b":scheme", scheme.as_bytes()),
+            ],
+            BrowserProfile::Safari => vec![
+                quiche::h3::Header::new(b":method", method.as_bytes()),
+                quiche::h3::Header::new(b":scheme", scheme.as_bytes()),
+                quiche::h3::Header::new(b":path", path.as_bytes()),
+                quiche::h3::Header::new(b":authority", authority.as_bytes()),
             ],
         };
 
@@ -231,5 +255,27 @@ impl H3Impersonator {
 impl Default for H3Impersonator {
     fn default() -> Self {
         Self::new().expect("Failed to initialize H3Impersonator")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quiche::h3::NameValue;
+
+    #[test]
+    fn test_safari_h3_request_headers_order() {
+        let headers = H3Impersonator::format_request_headers_for(
+            BrowserProfile::Safari,
+            "GET",
+            "example.com",
+            "https",
+            "/video",
+            None,
+        );
+        assert_eq!(headers[0].name(), b":method");
+        assert_eq!(headers[1].name(), b":scheme");
+        assert_eq!(headers[2].name(), b":path");
+        assert_eq!(headers[3].name(), b":authority");
     }
 }

@@ -29,6 +29,10 @@ pub fn build_http_client_with_config(
 
     let ua = if config.user_agent != "mm-dlp/1.0.0" {
         config.user_agent.clone()
+    } else if config.is_ios_safari() {
+        crate::config::SAFARI_IOS_USER_AGENT.to_string()
+    } else if config.is_safari_or_webkit() {
+        crate::config::SAFARI_MACOS_USER_AGENT.to_string()
     } else if config.is_gecko_or_firefox() {
         crate::config::FIREFOX_GECKO_USER_AGENT.to_string()
     } else {
@@ -75,6 +79,31 @@ pub fn build_http_client_with_config(
         headers.insert(
             reqwest::header::HeaderName::from_static("upgrade-insecure-requests"),
             reqwest::header::HeaderValue::from_static("1"),
+        );
+        builder = builder.default_headers(headers);
+    } else if config.is_safari_or_webkit() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
+        );
+        headers.insert(
+            reqwest::header::ACCEPT_LANGUAGE,
+            reqwest::header::HeaderValue::from_static("en-US,en;q=0.9"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-dest"),
+            reqwest::header::HeaderValue::from_static("document"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-mode"),
+            reqwest::header::HeaderValue::from_static("navigate"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-site"),
+            reqwest::header::HeaderValue::from_static("none"),
         );
         builder = builder.default_headers(headers);
     }

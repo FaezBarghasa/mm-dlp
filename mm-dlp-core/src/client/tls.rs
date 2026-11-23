@@ -31,6 +31,13 @@ impl TlsImpersonator {
                 })?;
                 builder.set_grease_enabled(false);
             }
+            BrowserProfile::Safari => {
+                let cipher_list = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305";
+                builder.set_cipher_list(cipher_list).map_err(|e| {
+                    EngineError::OsApiError(format!("Failed to set cipher list: {}", e))
+                })?;
+                builder.set_grease_enabled(false);
+            }
         }
 
         builder
@@ -59,6 +66,10 @@ impl TlsImpersonator {
 
     pub fn new_firefox() -> Result<Self, EngineError> {
         Self::for_browser(BrowserProfile::Firefox)
+    }
+
+    pub fn new_safari() -> Result<Self, EngineError> {
+        Self::for_browser(BrowserProfile::Safari)
     }
 
     pub fn profile(&self) -> BrowserProfile {
