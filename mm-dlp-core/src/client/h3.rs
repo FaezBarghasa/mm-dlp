@@ -1,3 +1,4 @@
+use crate::client::h2::BrowserProfile;
 use crate::client::EngineError;
 use quiche;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -8,32 +9,47 @@ pub const CHROME_H3_INITIAL_MAX_DATA: u64 = 10_485_760;
 pub const CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: u64 = 1_048_576;
 pub const CHROME_H3_INITIAL_MAX_STREAMS_BIDI: u64 = 100;
 
+pub const GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: u64 = 262_144;
+pub const GECKO_H3_INITIAL_MAX_DATA: u64 = 10_485_760;
+
 pub struct H3Impersonator {
     quic_config: quiche::Config,
     h3_config: quiche::h3::Config,
+    profile: BrowserProfile,
 }
 
 impl H3Impersonator {
     pub fn new() -> Result<Self, EngineError> {
+        Self::for_browser(BrowserProfile::Chrome)
+    }
+
+    pub fn for_browser(profile: BrowserProfile) -> Result<Self, EngineError> {
         let mut quic_config = quiche::Config::new(quiche::PROTOCOL_VERSION)
             .map_err(|e| EngineError::OsApiError(format!("Failed to create QUIC config: {}", e)))?;
 
-        // Chrome-like QUIC parameters for fingerprint evasion
         quic_config.set_application_protos(quiche::h3::APPLICATION_PROTOCOL)
             .map_err(|e| EngineError::OsApiError(format!("Failed to set H3 ALPN: {}", e)))?;
         quic_config.set_max_idle_timeout(CHROME_H3_MAX_IDLE_TIMEOUT);
         quic_config.set_initial_max_data(CHROME_H3_INITIAL_MAX_DATA);
-        quic_config.set_initial_max_stream_data_bidi_local(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
-        quic_config.set_initial_max_stream_data_bidi_remote(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
-        quic_config.set_initial_max_stream_data_uni(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+
+        match profile {
+            BrowserProfile::Chrome => {
+                quic_config.set_initial_max_stream_data_bidi_local(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.set_initial_max_stream_data_bidi_remote(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.set_initial_max_stream_data_uni(CHROME_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.grease(true);
+            }
+            BrowserProfile::Firefox => {
+                quic_config.set_initial_max_stream_data_bidi_local(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.set_initial_max_stream_data_bidi_remote(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.set_initial_max_stream_data_uni(GECKO_H3_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL);
+                quic_config.grease(false);
+            }
+        }
+
         quic_config.set_initial_max_streams_bidi(CHROME_H3_INITIAL_MAX_STREAMS_BIDI);
         quic_config.set_initial_max_streams_uni(CHROME_H3_INITIAL_MAX_STREAMS_BIDI);
-        
-        // Enable active migration to support connection recovery if the network interface/IP changes
         quic_config.set_disable_active_migration(false);
-
-        // Impersonate Chrome's GREASE for QUIC connections
-        quic_config.grease(true);
 
         let h3_config = quiche::h3::Config::new()
             .map_err(|e| EngineError::OsApiError(format!("Failed to create H3 config: {}", e)))?;
@@ -41,7 +57,16 @@ impl H3Impersonator {
         Ok(Self {
             quic_config,
             h3_config,
+            profile,
         })
+    }
+
+    pub fn new_firefox() -> Result<Self, EngineError> {
+        Self::for_browser(BrowserProfile::Firefox)
+    }
+
+    pub fn profile(&self) -> BrowserProfile {
+        self.profile
     }
 
     pub fn get_quic_config(&mut self) -> &mut quiche::Config {
@@ -78,21 +103,29 @@ impl H3Impersonator {
         ipv4_fallback.ok_or_else(|| EngineError::OsApiError("No valid IP addresses found".to_string()))
     }
 
-    /// Formats request headers for HTTP/3 exactly matching Chrome's internal ordering.
-    /// Includes support for a download recovery option via `resume_offset`.
-    pub fn format_request_headers(
+    /// Formats request headers for HTTP/3 matching the specified browser profile ordering.
+    pub fn format_request_headers_for(
+        profile: BrowserProfile,
         method: &str,
         authority: &str,
         scheme: &str,
         path: &str,
         resume_offset: Option<u64>,
     ) -> Vec<quiche::h3::Header> {
-        let mut headers = vec![
-            quiche::h3::Header::new(b":method", method.as_bytes()),
-            quiche::h3::Header::new(b":authority", authority.as_bytes()),
-            quiche::h3::Header::new(b":scheme", scheme.as_bytes()),
-            quiche::h3::Header::new(b":path", path.as_bytes()),
-        ];
+        let mut headers = match profile {
+            BrowserProfile::Chrome => vec![
+                quiche::h3::Header::new(b":method", method.as_bytes()),
+                quiche::h3::Header::new(b":authority", authority.as_bytes()),
+                quiche::h3::Header::new(b":scheme", scheme.as_bytes()),
+                quiche::h3::Header::new(b":path", path.as_bytes()),
+            ],
+            BrowserProfile::Firefox => vec![
+                quiche::h3::Header::new(b":method", method.as_bytes()),
+                quiche::h3::Header::new(b":path", path.as_bytes()),
+                quiche::h3::Header::new(b":authority", authority.as_bytes()),
+                quiche::h3::Header::new(b":scheme", scheme.as_bytes()),
+            ],
+        };
 
         // Application-layer download recovery
         if let Some(offset) = resume_offset {
@@ -101,6 +134,17 @@ impl H3Impersonator {
         }
 
         headers
+    }
+
+    /// Formats request headers for HTTP/3 exactly matching Chrome's internal ordering (backward compatible).
+    pub fn format_request_headers(
+        method: &str,
+        authority: &str,
+        scheme: &str,
+        path: &str,
+        resume_offset: Option<u64>,
+    ) -> Vec<quiche::h3::Header> {
+        Self::format_request_headers_for(BrowserProfile::Chrome, method, authority, scheme, path, resume_offset)
     }
 
     /// Initializes a quiche connection tailored for the dual-stack IPv6 socket,

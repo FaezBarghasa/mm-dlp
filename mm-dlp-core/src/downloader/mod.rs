@@ -27,6 +27,14 @@ pub fn build_http_client_with_config(
     #[cfg(not(target_os = "ios"))]
     let (max_idle, idle_timeout) = (32, Duration::from_secs(90));
 
+    let ua = if config.user_agent != "mm-dlp/1.0.0" {
+        config.user_agent.clone()
+    } else if config.is_gecko_or_firefox() {
+        crate::config::FIREFOX_GECKO_USER_AGENT.to_string()
+    } else {
+        crate::config::CHROME_USER_AGENT.to_string()
+    };
+
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(config.timeout_seconds.max(5)))
         .connect_timeout(Duration::from_secs(10))
@@ -34,7 +42,70 @@ pub fn build_http_client_with_config(
         .tcp_keepalive(Some(Duration::from_secs(60)))
         .pool_max_idle_per_host(max_idle)
         .pool_idle_timeout(idle_timeout)
-        .user_agent(&config.user_agent);
+        .user_agent(&ua);
+
+    if config.is_gecko_or_firefox() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
+        );
+        headers.insert(
+            reqwest::header::ACCEPT_LANGUAGE,
+            reqwest::header::HeaderValue::from_static("en-US,en;q=0.5"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-dest"),
+            reqwest::header::HeaderValue::from_static("document"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-mode"),
+            reqwest::header::HeaderValue::from_static("navigate"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-site"),
+            reqwest::header::HeaderValue::from_static("none"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("sec-fetch-user"),
+            reqwest::header::HeaderValue::from_static("?1"),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("upgrade-insecure-requests"),
+            reqwest::header::HeaderValue::from_static("1"),
+        );
+        builder = builder.default_headers(headers);
+    }
+
+    // Configure Cookie Jar if cookies_file or cookies_from_browser is specified
+    let mut cookie_items = Vec::new();
+    if let Some(ref path) = config.cookies_file {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            cookie_items.extend(crate::client::cookies::CookieExtractor::parse_netscape_cookie_items(&content));
+        }
+    }
+    if let Some(ref browser_spec) = config.cookies_from_browser {
+        if let Ok(content) = crate::client::cookies::BrowserCookieExtractor::extract(browser_spec) {
+            cookie_items.extend(crate::client::cookies::CookieExtractor::parse_netscape_cookie_items(&content));
+        }
+    }
+
+    if !cookie_items.is_empty() {
+        let cookie_jar = std::sync::Arc::new(reqwest::cookie::Jar::default());
+        for cookie in &cookie_items {
+            let scheme = if cookie.secure { "https" } else { "http" };
+            let domain_clean = cookie.domain.trim_start_matches('.');
+            let path_clean = if cookie.path.is_empty() { "/" } else { &cookie.path };
+            let url_str = format!("{}://{}{}", scheme, domain_clean, path_clean);
+            if let Ok(url) = url_str.parse::<reqwest::Url>() {
+                let cookie_str = format!("{}={}", cookie.name, cookie.value);
+                cookie_jar.add_cookie_str(&cookie_str, &url);
+            }
+        }
+        builder = builder.cookie_provider(cookie_jar);
+    }
 
     if let Some(ref proxy_url) = config.proxy
         && let Ok(proxy) = reqwest::Proxy::all(proxy_url)
