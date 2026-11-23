@@ -84,3 +84,107 @@ seg2.ts
 
     std::fs::remove_file(&temp_path).unwrap();
 }
+
+#[tokio::test]
+async fn test_resumable_download_with_range_support() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0; 2048];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+
+                    if req.contains("Range: bytes=5-") {
+                        let response = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 5-9/10\r\nContent-Length: 5\r\nConnection: close\r\n\r\n56789";
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    } else {
+                        let response = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789";
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
+                });
+            }
+        }
+    });
+
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let target_path = std::env::temp_dir().join(format!("mm_dlp_resume_test_{}.bin", id));
+    let part_path = std::path::PathBuf::from(format!("{}.part", target_path.display()));
+
+    // Create partial file with first 5 bytes
+    tokio::fs::write(&part_path, b"01234").await.unwrap();
+
+    let client = Client::new();
+    let url = format!("http://127.0.0.1:{}/media.bin", port);
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    let total = mm_dlp_core::downloader::download_resumable_to_file(
+        &client,
+        &url,
+        &target_path,
+        cancel,
+        false,
+        None,
+    )
+    .await
+    .expect("Resume download failed");
+
+    assert_eq!(total, 10);
+    assert!(!part_path.exists(), ".part file should be renamed");
+    assert!(target_path.exists(), "Target file should exist");
+
+    let content = tokio::fs::read(&target_path).await.unwrap();
+    assert_eq!(content, b"0123456789");
+
+    let _ = tokio::fs::remove_file(&target_path).await;
+}
+
+#[tokio::test]
+async fn test_direct_download_with_no_part_flag() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        }
+    });
+
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let target_path = std::env::temp_dir().join(format!("mm_dlp_nopart_test_{}.bin", id));
+    let part_path = std::path::PathBuf::from(format!("{}.part", target_path.display()));
+
+    let client = Client::new();
+    let url = format!("http://127.0.0.1:{}/direct.bin", port);
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    let total = mm_dlp_core::downloader::download_resumable_to_file(
+        &client,
+        &url,
+        &target_path,
+        cancel,
+        true, // no_part = true
+        None,
+    )
+    .await
+    .expect("Direct download failed");
+
+    assert_eq!(total, 5);
+    assert!(!part_path.exists(), ".part file should never exist when no_part=true");
+    assert!(target_path.exists());
+
+    let content = tokio::fs::read(&target_path).await.unwrap();
+    assert_eq!(content, b"hello");
+
+    let _ = tokio::fs::remove_file(&target_path).await;
+}

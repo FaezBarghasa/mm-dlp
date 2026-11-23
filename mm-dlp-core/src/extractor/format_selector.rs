@@ -435,4 +435,22 @@ mod tests {
             _ => panic!("Expected Merged format"),
         }
     }
+
+    #[test]
+    fn test_select_wildcard_bv_star() {
+        let info = create_test_media_info();
+        // bv strictly prefers video-only (137 or 248)
+        let selected_bv = FormatSelector::select(&info, "bv").unwrap();
+        match selected_bv {
+            SelectedFormat::Single(f) => assert_eq!(f.format_id, "137"),
+            _ => panic!("Expected Single format"),
+        }
+
+        // bv* allows video with or without audio
+        let selected_bv_star = FormatSelector::select(&info, "bv*").unwrap();
+        match selected_bv_star {
+            SelectedFormat::Single(f) => assert!(f.has_video()),
+            _ => panic!("Expected Single format"),
+        }
+    }
 }

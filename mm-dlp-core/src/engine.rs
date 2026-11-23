@@ -12,8 +12,7 @@ pub use crate::downloader::hls::HlsDownloader;
 use crate::downloader::parallel::SequencedChunk;
 pub use crate::downloader::torrent::{TorrentDownloader, TorrentFileEntry, TorrentMetadata};
 use crate::downloader::{
-    build_http_client_with_config, download_resumable_to_file, fetch_with_fallback,
-    stream_to_file, RateLimiter,
+    build_http_client_with_config, download_resumable_to_file, RateLimiter,
 };
 use crate::error::EngineError;
 use crate::extractor::PlatformRegistry;
@@ -249,8 +248,6 @@ impl MmDlpEngine {
             };
 
             callback_run.on_status("Fetching audio stream".to_string());
-            let response = fetch_with_fallback(&self.client, &candidate.url).await?;
-
             let clean_title = sanitize_filename(&metadata.title);
             let target_filename = format!("{}.{}", clean_title, download_config.audio_format);
             let raw_target_path = output_dir.join(target_filename);

@@ -120,3 +120,27 @@ fn test_cli_phase4_drop_in_parity_flags() {
     assert!(cli.write_info_json);
     assert_eq!(cli.socket_timeout, Some(45));
 }
+
+#[test]
+fn test_cli_phase5_ultimate_parity_flags() {
+    let args = vec![
+        "mm-dlp",
+        "--limit-rate",
+        "1.5M",
+        "--no-part",
+        "--playlist-items",
+        "1,2,5-8",
+        "--playlist-start",
+        "3",
+        "--playlist-end",
+        "9",
+        "https://example.com/playlist",
+    ];
+
+    let cli = Cli::try_parse_from(args).expect("Failed to parse ultimate parity flags");
+    assert_eq!(cli.limit_rate.as_deref(), Some("1.5M"));
+    assert!(cli.no_part);
+    assert_eq!(cli.playlist_items.as_deref(), Some("1,2,5-8"));
+    assert_eq!(cli.playlist_start, Some(3));
+    assert_eq!(cli.playlist_end, Some(9));
+}

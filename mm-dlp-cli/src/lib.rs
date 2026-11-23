@@ -397,6 +397,16 @@ pub enum Commands {
 }
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
+    tokio::select! {
+        res = run_cli_inner() => res,
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\n[download] Interrupted by user (SIGINT)");
+            std::process::exit(130);
+        }
+    }
+}
+
+async fn run_cli_inner() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mut config = EngineConfig::default();
     if let Some(ref ua) = cli.user_agent {
@@ -769,7 +779,7 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             fragment_retries,
             skip_unavailable_fragments,
             no_part: cli.no_part,
-            limit_rate: config.limit_rate,
+            limit_rate: engine.config().limit_rate,
         };
 
         if cli.write_info_json && !is_stdout {
@@ -933,6 +943,8 @@ async fn handle_legacy_download(
         buffer_size_bytes: None,
         fragment_retries: 10,
         skip_unavailable_fragments: true,
+        no_part: false,
+        limit_rate: None,
     };
 
     let callback: Arc<dyn DownloadProgressCallback> =
